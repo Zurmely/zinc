@@ -15,6 +15,16 @@ enum SaveHUD {
         )
     }
 
+    static func showAlreadySaved(text: String, source _: String, clipID: UUID? = nil) {
+        present(
+            title: "Already saved",
+            preview: collapsedPreview(text),
+            playSound: false,
+            expands: true,
+            clipID: clipID
+        )
+    }
+
     static func showFailure() {
         present(
             title: "Nothing to save",
