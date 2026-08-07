@@ -233,32 +233,44 @@ final class ShiftShiftMonitor {
 
         isCapturing = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            guard let self else { return }
-
-            let selection = SelectionCapture.captureSelection()
-            defer { self.isCapturing = false }
-
-            guard let selection else {
-                ZincLog.write("capture returned nil")
-                SaveHUD.showFailure()
-                return
+        Task { [weak self] in
+            defer {
+                Task { @MainActor [weak self] in
+                    self?.isCapturing = false
+                }
             }
 
-            ZincLog.write("captured \(selection.plainText.count) chars")
-            let context = ContextResolver.resolve()
-            let clip = Clip(
-                text: selection.clipText,
-                appName: context.appName,
-                bundleID: context.bundleID,
-                pageURL: context.pageURL,
-                pageTitle: context.pageTitle
-            )
+            // Brief settle so the second Shift key-up finishes before Cmd+C.
+            try? await Task.sleep(for: .milliseconds(120))
 
-            ClipStore.shared.add(clip)
-            MarkdownExporter.shared.export(selection: selection, clip: clip)
-            SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
-            self.onDoubleShift?()
+            guard let self else { return }
+
+            // Overlap pasteboard wait with browser context resolution.
+            async let selectionTask = SelectionCapture.captureSelection()
+            async let contextTask = ContextResolver.resolve()
+            let (selection, context) = await (selectionTask, contextTask)
+
+            await MainActor.run {
+                guard let selection else {
+                    ZincLog.write("capture returned nil")
+                    SaveHUD.showFailure()
+                    return
+                }
+
+                ZincLog.write("captured \(selection.plainText.count) chars")
+                let clip = Clip(
+                    text: selection.clipText,
+                    appName: context.appName,
+                    bundleID: context.bundleID,
+                    pageURL: context.pageURL,
+                    pageTitle: context.pageTitle
+                )
+
+                ClipStore.shared.add(clip)
+                MarkdownExporter.shared.export(selection: selection, clip: clip)
+                SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
+                self.onDoubleShift?()
+            }
         }
     }
 }

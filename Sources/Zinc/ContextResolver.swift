@@ -17,13 +17,19 @@ enum ContextResolver {
         "com.microsoft.edgemac",
     ]
 
-    static func resolve() -> SourceContext {
-        let workspace = NSWorkspace.shared
-        let frontApp = workspace.frontmostApplication
+    private static let appleScriptTimeout: Duration = .milliseconds(500)
 
-        let appName = frontApp?.localizedName ?? "Unknown"
-        let bundleID = frontApp?.bundleIdentifier ?? "unknown"
-        let icon = frontApp.flatMap { workspace.icon(forFile: $0.bundleURL?.path ?? "") }
+    /// Resolves the frontmost app and, for known browsers, the active tab URL/title.
+    /// AppleScript runs off the main thread; callers should prefer this async API.
+    static func resolve() async -> SourceContext {
+        let (appName, bundleID, icon) = await MainActor.run { () -> (String, String, NSImage?) in
+            let workspace = NSWorkspace.shared
+            let frontApp = workspace.frontmostApplication
+            let appName = frontApp?.localizedName ?? "Unknown"
+            let bundleID = frontApp?.bundleIdentifier ?? "unknown"
+            let icon = frontApp.flatMap { workspace.icon(forFile: $0.bundleURL?.path ?? "") }
+            return (appName, bundleID, icon)
+        }
 
         guard browserBundleIDs.contains(bundleID) else {
             return SourceContext(
@@ -35,7 +41,7 @@ enum ContextResolver {
             )
         }
 
-        let browserInfo = fetchBrowserInfo(bundleID: bundleID)
+        let browserInfo = await fetchBrowserInfo(bundleID: bundleID)
         return SourceContext(
             appName: appName,
             bundleID: bundleID,
@@ -45,7 +51,7 @@ enum ContextResolver {
         )
     }
 
-    private static func fetchBrowserInfo(bundleID: String) -> (url: String, title: String)? {
+    private static func fetchBrowserInfo(bundleID: String) async -> (url: String, title: String)? {
         let script: String
 
         switch bundleID {
@@ -78,31 +84,45 @@ enum ContextResolver {
             return nil
         }
 
-        return runAppleScript(script)
+        return await runAppleScript(script)
     }
 
-    private static func runAppleScript(_ source: String) -> (url: String, title: String)? {
-        var result: (url: String, title: String)?
-        let semaphore = DispatchSemaphore(value: 0)
+    private static func runAppleScript(_ source: String) async -> (url: String, title: String)? {
+        await withCheckedContinuation { continuation in
+            let lock = NSLock()
+            var resumed = false
+            func finish(_ value: (url: String, title: String)?) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume(returning: value)
+            }
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            defer { semaphore.signal() }
-            guard let script = NSAppleScript(source: source) else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                finish(Self.executeAppleScript(source))
+            }
 
-            var error: NSDictionary?
-            let output = script.executeAndReturnError(&error)
-            if error != nil { return }
-
-            guard let raw = output.stringValue, !raw.isEmpty else { return }
-            let parts = raw.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
-            guard let urlPart = parts.first else { return }
-            let url = String(urlPart)
-            let title = parts.count > 1 ? String(parts[1]) : ""
-            guard !url.isEmpty else { return }
-            result = (url: url, title: title)
+            Task {
+                try? await Task.sleep(for: appleScriptTimeout)
+                finish(nil)
+            }
         }
+    }
 
-        _ = semaphore.wait(timeout: .now() + 0.5)
-        return result
+    private static func executeAppleScript(_ source: String) -> (url: String, title: String)? {
+        guard let script = NSAppleScript(source: source) else { return nil }
+
+        var error: NSDictionary?
+        let output = script.executeAndReturnError(&error)
+        if error != nil { return nil }
+
+        guard let raw = output.stringValue, !raw.isEmpty else { return nil }
+        let parts = raw.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+        guard let urlPart = parts.first else { return nil }
+        let url = String(urlPart)
+        let title = parts.count > 1 ? String(parts[1]) : ""
+        guard !url.isEmpty else { return nil }
+        return (url: url, title: title)
     }
 }
