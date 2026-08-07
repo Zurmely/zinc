@@ -1,7 +1,7 @@
 import Foundation
 
 /// Result of attempting to load the clip index from disk.
-enum ClipIndexLoadResult: Equatable {
+public enum ClipIndexLoadResult: Equatable {
     /// No `clips.json` present — fresh install or cleared state.
     case missing
     /// Successfully decoded clips (versioned or legacy bare-array format).
@@ -13,17 +13,17 @@ enum ClipIndexLoadResult: Equatable {
 
 /// Atomic, versioned persistence for the clip index with corrupt-file quarantine
 /// and a single rolling backup of the last good write.
-final class ClipIndexFile {
-    let directoryURL: URL
-    let fileURL: URL
-    let backupURL: URL
+public final class ClipIndexFile {
+    public let directoryURL: URL
+    public let fileURL: URL
+    public let backupURL: URL
 
     private let fileManager: FileManager
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let now: () -> Date
 
-    init(
+    public init(
         directoryURL: URL,
         fileManager: FileManager = .default,
         now: @escaping () -> Date = Date.init
@@ -44,7 +44,7 @@ final class ClipIndexFile {
 
     /// Loads the index. On decode failure, quarantines the bad file as
     /// `clips.corrupt-<timestamp>.json` and returns `.corrupt`.
-    func load() -> ClipIndexLoadResult {
+    public func load() -> ClipIndexLoadResult {
         guard fileManager.fileExists(atPath: fileURL.path) else {
             return .missing
         }
@@ -61,7 +61,7 @@ final class ClipIndexFile {
 
     /// Writes a versioned envelope atomically. Keeps one rolling backup of the
     /// previous good index at `clips.json.bak`.
-    func save(_ clips: [Clip]) throws {
+    public func save(_ clips: [Clip]) throws {
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
         let document = ClipIndexDocument(clips: clips)
@@ -84,13 +84,13 @@ final class ClipIndexFile {
     }
 
     /// Restores clips from the rolling backup, if present and valid.
-    func loadBackup() -> [Clip]? {
+    public func loadBackup() -> [Clip]? {
         guard fileManager.fileExists(atPath: backupURL.path) else { return nil }
         guard let data = try? Data(contentsOf: backupURL) else { return nil }
         return try? decodeClips(from: data)
     }
 
-    var hasBackup: Bool {
+    public var hasBackup: Bool {
         fileManager.fileExists(atPath: backupURL.path)
     }
 

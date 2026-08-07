@@ -1,16 +1,16 @@
 import Foundation
 
-struct Clip: Identifiable, Codable, Equatable, Hashable {
-    let id: UUID
-    let text: String
-    var savedAt: Date
-    let appName: String
-    let bundleID: String
-    let pageURL: String?
-    let pageTitle: String?
-    var markdownPath: String?
+public struct Clip: Identifiable, Codable, Equatable, Hashable {
+    public let id: UUID
+    public let text: String
+    public var savedAt: Date
+    public let appName: String
+    public let bundleID: String
+    public let pageURL: String?
+    public let pageTitle: String?
+    public var markdownPath: String?
 
-    init(
+    public init(
         id: UUID = UUID(),
         text: String,
         savedAt: Date = Date(),
@@ -30,7 +30,7 @@ struct Clip: Identifiable, Codable, Equatable, Hashable {
         self.markdownPath = markdownPath
     }
 
-    var preview: String {
+    public var preview: String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.count <= 120 {
             return trimmed
@@ -38,7 +38,7 @@ struct Clip: Identifiable, Codable, Equatable, Hashable {
         return String(trimmed.prefix(117)) + "..."
     }
 
-    var contextLabel: String {
+    public var contextLabel: String {
         if let pageTitle, !pageTitle.isEmpty {
             return pageTitle
         }

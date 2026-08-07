@@ -4,10 +4,10 @@ import Foundation
 ///
 /// Each vault `.md` file carries YAML front matter with `id`, `app`, `bundle`,
 /// optional `url`/`title`, and `saved`. The body becomes the clip text.
-enum VaultReindexer {
+public enum VaultReindexer {
     /// Walks `vaultURL` recursively, parses front matter, and returns clips sorted
     /// newest-first. Files that lack a usable `id` are skipped.
-    static func reindex(vaultURL: URL, fileManager: FileManager = .default) -> [Clip] {
+    public static func reindex(vaultURL: URL, fileManager: FileManager = .default) -> [Clip] {
         guard fileManager.fileExists(atPath: vaultURL.path) else { return [] }
 
         let enumerator = fileManager.enumerator(
@@ -37,7 +37,7 @@ enum VaultReindexer {
     /// Merges vault-derived clips into an existing index by `id`. Vault entries
     /// fill gaps; existing index entries win on conflict so in-memory edits aren't
     /// clobbered.
-    static func merge(existing: [Clip], fromVault vaultClips: [Clip]) -> [Clip] {
+    public static func merge(existing: [Clip], fromVault vaultClips: [Clip]) -> [Clip] {
         var byID = Dictionary(uniqueKeysWithValues: vaultClips.map { ($0.id, $0) })
         for clip in existing {
             byID[clip.id] = clip
@@ -47,12 +47,12 @@ enum VaultReindexer {
 
     // MARK: - Parsing
 
-    static func clip(fromMarkdownAt url: URL) -> Clip? {
+    public static func clip(fromMarkdownAt url: URL) -> Clip? {
         guard let contents = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         return clip(fromMarkdown: contents, markdownPath: url.path)
     }
 
-    static func clip(fromMarkdown contents: String, markdownPath: String) -> Clip? {
+    public static func clip(fromMarkdown contents: String, markdownPath: String) -> Clip? {
         let (frontMatter, body) = splitFrontMatter(contents)
         guard let idString = frontMatter["id"], let id = UUID(uuidString: idString) else {
             return nil

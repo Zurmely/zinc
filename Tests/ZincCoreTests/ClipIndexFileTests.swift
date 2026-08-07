@@ -187,7 +187,11 @@ final class VaultReindexerTests: XCTestCase {
         XCTAssertEqual(clips.count, 1)
         XCTAssertEqual(clips[0].id, id)
         XCTAssertEqual(clips[0].text, "Captured text")
-        XCTAssertEqual(clips[0].markdownPath, folder.appendingPathComponent("note.md").path)
+        // macOS temp paths may surface as /var/... or /private/var/...
+        XCTAssertEqual(
+            clips[0].markdownPath.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path },
+            folder.appendingPathComponent("note.md").resolvingSymlinksInPath().path
+        )
     }
 }
 
