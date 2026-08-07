@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 extension Notification.Name {
@@ -9,6 +10,12 @@ enum ClipAddResult: Equatable {
     case deduplicated(existingID: UUID)
 }
 
+/// Describes a recoverable failure loading `clips.json`.
+struct ClipIndexRecoveryOffer: Equatable {
+    let preservedCorruptURL: URL
+    let backupAvailable: Bool
+}
+
 final class ClipStore: ObservableObject {
     static let shared = ClipStore()
 
@@ -18,23 +25,24 @@ final class ClipStore: ObservableObject {
 
     @Published private(set) var clips: [Clip] = []
 
-    private let fileURL: URL
-    private let encoder: JSONEncoder
-    private let decoder: JSONDecoder
+    /// Set when the on-disk index could not be decoded. Cleared after the user
+    /// recovers (backup / reindex) or dismisses and starts empty.
+    private(set) var pendingRecovery: ClipIndexRecoveryOffer?
+
+    private let indexFile: ClipIndexFile
 
     private init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let zincDir = appSupport.appendingPathComponent("Zinc", isDirectory: true)
         try? FileManager.default.createDirectory(at: zincDir, withIntermediateDirectories: true)
-        fileURL = zincDir.appendingPathComponent("clips.json")
+        indexFile = ClipIndexFile(directoryURL: zincDir)
+        load()
+    }
 
-        encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        encoder.dateEncodingStrategy = .iso8601
-
-        decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-
+    /// Test seam — uses an isolated directory instead of Application Support.
+    init(directoryURL: URL) {
+        try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        indexFile = ClipIndexFile(directoryURL: directoryURL)
         load()
     }
 
@@ -108,26 +116,55 @@ final class ClipStore: ObservableObject {
         }
     }
 
+    /// Restores the rolling backup of the last good index, if available.
+    @discardableResult
+    func restoreFromBackup() -> Bool {
+        guard let restored = indexFile.loadBackup() else { return false }
+        clips = restored
+        pendingRecovery = nil
+        save()
+        MarkdownPreviewStore.shared.clear()
+        NotificationCenter.default.post(name: .clipsDidChange, object: nil)
+        return true
+    }
+
+    /// Rebuilds the index from Markdown files in the vault (merge by id).
+    @discardableResult
+    func reindexFromVault(vaultURL: URL = VaultSettings.vaultURL) -> Int {
+        let vaultClips = VaultReindexer.reindex(vaultURL: vaultURL)
+        clips = VaultReindexer.merge(existing: clips, fromVault: vaultClips)
+        pendingRecovery = nil
+        save()
+        MarkdownPreviewStore.shared.clear()
+        NotificationCenter.default.post(name: .clipsDidChange, object: nil)
+        return clips.count
+    }
+
+    /// Clears the recovery offer without restoring — user chose to start empty.
+    /// The quarantined corrupt file is left untouched on disk.
+    func dismissRecoveryOffer() {
+        pendingRecovery = nil
+    }
+
     private func load() {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-        do {
-            let data = try Data(contentsOf: fileURL)
-            clips = try decoder.decode([Clip].self, from: data)
-        } catch {
-            NSLog("Zinc: failed to load clips: \(error)")
+        switch indexFile.load() {
+        case .missing:
             clips = []
+        case .loaded(let loaded):
+            clips = loaded
+        case .corrupt(let preservedURL):
+            NSLog("Zinc: failed to load clips; preserved corrupt index at \(preservedURL.path)")
+            clips = []
+            pendingRecovery = ClipIndexRecoveryOffer(
+                preservedCorruptURL: preservedURL,
+                backupAvailable: indexFile.hasBackup
+            )
         }
     }
 
     private func save() {
         do {
-            let data = try encoder.encode(clips)
-            let tempURL = fileURL.appendingPathExtension("tmp")
-            try data.write(to: tempURL, options: .atomic)
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                try FileManager.default.removeItem(at: fileURL)
-            }
-            try FileManager.default.moveItem(at: tempURL, to: fileURL)
+            try indexFile.save(clips)
         } catch {
             NSLog("Zinc: failed to save clips: \(error)")
         }

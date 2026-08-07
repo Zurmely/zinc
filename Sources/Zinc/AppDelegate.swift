@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusTooltip()
         // Ask for Accessibility after monitors are wired (alert is async, single dialog).
         Permissions.requestAccessibilityIfNeeded()
+        // Offer recovery if clips.json was corrupt (quarantined on load).
+        ClipIndexRecoveryAlert.presentIfNeeded()
     }
 
     /// Accessory apps need an explicit main menu for Cmd+Q to work.
@@ -72,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Open Zinc Folder", action: #selector(openVaultFolder), keyEquivalent: "")
         menu.addItem(withTitle: "Choose Zinc Folder…", action: #selector(chooseVaultFolder), keyEquivalent: "")
+        menu.addItem(withTitle: "Reindex from Vault…", action: #selector(reindexFromVault), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Clear All Clips", action: #selector(clearClips), keyEquivalent: "")
         menu.addItem(withTitle: "Open Accessibility Settings", action: #selector(openAccessibility), keyEquivalent: "")
@@ -130,6 +133,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if panel.runModal() == .OK, let url = panel.url {
             VaultSettings.setVaultURL(url)
             openVaultFolder()
+        }
+    }
+
+    @objc private func reindexFromVault() {
+        let alert = NSAlert()
+        alert.messageText = "Reindex from Vault?"
+        alert.informativeText = "Zinc will scan your Markdown vault and rebuild the clip index from front matter. Existing index entries are kept when they share an id with a vault file."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Reindex")
+        alert.addButton(withTitle: "Cancel")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let count = ClipStore.shared.reindexFromVault()
+            updateStatusTooltip()
+            let done = NSAlert()
+            done.messageText = count == 1 ? "1 clip indexed" : "\(count) clips indexed"
+            done.alertStyle = .informational
+            done.addButton(withTitle: "OK")
+            done.runModal()
         }
     }
 
