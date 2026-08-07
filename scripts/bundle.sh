@@ -75,12 +75,18 @@ if [[ -z "$IDENTITY" ]]; then
     | head -n 1 || true)"
 fi
 
+ENTITLEMENTS="$ROOT/Resources/Zinc.entitlements"
+if [[ ! -f "$ENTITLEMENTS" ]]; then
+  echo "error: missing entitlements file at $ENTITLEMENTS" >&2
+  exit 1
+fi
+
 if [[ -n "$IDENTITY" ]]; then
   echo "Signing with: $IDENTITY"
-  codesign -s "$IDENTITY" --force --deep --options runtime "$APP"
+  codesign -s "$IDENTITY" --force --options runtime --entitlements "$ENTITLEMENTS" "$APP"
 else
   echo "warning: no Apple Development identity found — falling back to ad-hoc" >&2
-  codesign -s - --force --deep --identifier "com.zurmely.zinc" "$APP"
+  codesign -s - --force --identifier "com.zurmely.zinc" --entitlements "$ENTITLEMENTS" "$APP"
 fi
 
 codesign -dv "$APP" 2>&1 | sed -n '1,12p' || true
