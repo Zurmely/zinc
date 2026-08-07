@@ -5,19 +5,25 @@ import Carbon.HIToolbox
 enum SelectionCapture {
     static let syntheticUserData: Int64 = 0x5A494E43 // "ZINC"
 
+    private static let pasteboardPollNanos: UInt64 = 10_000_000 // 10 ms
+    private static let settlePollNanos: UInt64 = 25_000_000 // 25 ms
+    private static let copyKeyGapNanos: UInt64 = 8_000_000 // 8 ms
+    private static let pasteboardTimeout: TimeInterval = 0.5
+    private static let maxSettlePasses = 10
+
     /// Captures the current selection by synthesizing Cmd+C, then restores the pasteboard.
-    /// Must be called on the main thread.
-    static func captureSelection() -> RichSelection? {
+    /// Polls with `Task.sleep` so the main thread is never busy-waited.
+    static func captureSelection() async -> RichSelection? {
         let pasteboard = NSPasteboard.general
         let originalChangeCount = pasteboard.changeCount
         let snapshot = PasteboardSnapshot.capture(from: pasteboard)
 
-        guard postCopyCommand() else {
+        guard await postCopyCommand() else {
             NSLog("Zinc: failed to post Cmd+C")
             return nil
         }
 
-        let captured = waitForNewPasteboardContent(
+        let captured = await waitForNewPasteboardContent(
             pasteboard: pasteboard,
             originalChangeCount: originalChangeCount
         )
@@ -32,7 +38,7 @@ enum SelectionCapture {
         return captured
     }
 
-    private static func postCopyCommand() -> Bool {
+    private static func postCopyCommand() async -> Bool {
         // Private source so physical Shift is not inherited into the synthetic event.
         guard let source = CGEventSource(stateID: .privateState) else { return false }
         source.localEventsSuppressionInterval = 0.0
@@ -50,7 +56,7 @@ enum SelectionCapture {
         keyUp.setIntegerValueField(.eventSourceUserData, value: syntheticUserData)
 
         keyDown.post(tap: .cghidEventTap)
-        usleep(8_000)
+        try? await Task.sleep(nanoseconds: copyKeyGapNanos)
         keyUp.post(tap: .cghidEventTap)
         return true
     }
@@ -58,16 +64,44 @@ enum SelectionCapture {
     private static func waitForNewPasteboardContent(
         pasteboard: NSPasteboard,
         originalChangeCount: Int
-    ) -> RichSelection? {
-        let deadline = Date().addingTimeInterval(0.5)
+    ) async -> RichSelection? {
+        let deadline = Date().addingTimeInterval(pasteboardTimeout)
         while Date() < deadline {
             if pasteboard.changeCount != originalChangeCount {
-                usleep(25_000)
-                return RichSelection.read(from: pasteboard)
+                return await waitForStableSelection(from: pasteboard)
             }
-            usleep(10_000)
+            try? await Task.sleep(nanoseconds: pasteboardPollNanos)
         }
         return nil
+    }
+
+    /// Read, wait, read again until the pasteboard flavor set stops changing.
+    private static func waitForStableSelection(from pasteboard: NSPasteboard) async -> RichSelection? {
+        var previousSignature: String?
+        var previousSelection: RichSelection?
+
+        for _ in 0..<maxSettlePasses {
+            let signature = pasteboardSignature(pasteboard)
+            let selection = RichSelection.read(from: pasteboard)
+
+            if let previousSignature, previousSignature == signature {
+                return selection ?? previousSelection
+            }
+
+            previousSignature = signature
+            previousSelection = selection
+            try? await Task.sleep(nanoseconds: settlePollNanos)
+        }
+
+        return previousSelection ?? RichSelection.read(from: pasteboard)
+    }
+
+    private static func pasteboardSignature(_ pasteboard: NSPasteboard) -> String {
+        let types = (pasteboard.types ?? []).map(\.rawValue).sorted()
+        let itemCount = pasteboard.pasteboardItems?.count ?? 0
+        let plainLength = pasteboard.string(forType: .string)?.count ?? 0
+        let htmlLength = pasteboard.data(forType: .html)?.count ?? 0
+        return "\(itemCount)|\(plainLength)|\(htmlLength)|\(types.joined(separator: ","))"
     }
 
     static func isSyntheticEvent(_ event: CGEvent) -> Bool {
