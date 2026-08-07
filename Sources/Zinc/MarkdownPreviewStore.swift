@@ -1,4 +1,5 @@
 import Foundation
+import ZincCore
 
 final class MarkdownPreviewStore: ObservableObject {
     static let shared = MarkdownPreviewStore()

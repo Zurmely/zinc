@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
 import Foundation
+import ZincCore
 
 private enum ZincLog {
     static let url: URL = {

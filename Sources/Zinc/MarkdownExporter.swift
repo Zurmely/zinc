@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ZincCore
 
 final class MarkdownExporter {
     static let shared = MarkdownExporter()

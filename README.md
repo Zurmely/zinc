@@ -12,11 +12,14 @@ A native macOS menu bar app for saving text selections with context. Double-tap 
 - **Search** — filter clips by text, app name, or URL
 - **Multi-select** — Space to toggle selection, copy multiple clips as newline-joined plain text
 - **Persistent storage** — clips saved to `~/Library/Application Support/Zinc/clips.json`
+- **Optional iCloud sync** — opt-in from Settings; syncs clip text and metadata to Zinc on iPhone and iPad (Markdown vault stays local on Mac)
 
 ## Requirements
 
 - macOS 14.0 or later
 - Swift 6.x (Command Line Tools or Xcode)
+- iOS 17.0+ and Xcode for the mobile app
+- Apple Developer account for CloudKit sync (both Mac and iOS targets)
 
 ## Build & Run
 
@@ -98,9 +101,43 @@ Each capture is exported in the background to a Markdown file with YAML front ma
 
 The vault location defaults to `~/Zinc` and can be changed from the menu bar. Images from rich selections are saved as sidecar files and linked relatively in the Markdown.
 
+## Optional iCloud Sync
+
+iCloud sync is **off by default**. Local `clips.json` and the Markdown vault continue to work without an Apple ID or network access.
+
+### Enable on Mac
+
+1. Open **Settings…** from the menu bar
+2. Under **iCloud**, turn on **Sync clips with iCloud**
+3. Sign in to iCloud on your Mac if prompted
+
+Only clip text and metadata sync. Markdown vault files and assets remain on your Mac.
+
+### Zinc Mobile (iOS)
+
+The iOS companion app lives in `Apps/ZincMobile/`. Open `ZincMobile.xcodeproj` in Xcode, select your team, and run on a device or simulator.
+
+- Browse, search, copy, and delete synced clips
+- Uses the same iCloud container as the Mac app (`iCloud.com.zurmely.zinc`)
+- Keeps a local cache for offline viewing after the first sync
+
+### CloudKit setup (Developer)
+
+Both targets need the same CloudKit container:
+
+1. In [Apple Developer](https://developer.apple.com/account/resources/identifiers/list), ensure bundle IDs exist:
+   - `com.zurmely.zinc` (macOS)
+   - `com.zurmely.zinc.ios` (iOS)
+2. Enable **iCloud** capability with CloudKit for both
+3. Create container `iCloud.com.zurmely.zinc` and attach it to both App IDs
+4. Sign the Mac app with entitlements (`Resources/Zinc.entitlements`) — `bundle.sh` passes them to `codesign` when present
+5. Use the same iCloud account on Mac and iPhone for private database sync
+
 ## Known Limitations
 
 - Double-Shift detection requires Accessibility permission
 - Browser URL capture requires per-browser Automation approval
 - Selection capture synthesizes Cmd+C; your clipboard is restored after each save
 - Remote image downloads use a short timeout and fall back to the original URL on failure
+- iCloud sync requires a paid Apple Developer account and CloudKit container setup
+- The iOS app syncs clip metadata only (no Markdown vault or images on phone)

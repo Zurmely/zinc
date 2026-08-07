@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ZincCore
 
 struct ClipListView: View {
     @ObservedObject var viewModel: ClipPanelViewModel

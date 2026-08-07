@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ZincCore
 
 struct ClipDetailView: View {
     let clip: Clip
