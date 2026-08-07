@@ -255,9 +255,14 @@ final class ShiftShiftMonitor {
                 pageTitle: context.pageTitle
             )
 
-            ClipStore.shared.add(clip)
-            MarkdownExporter.shared.export(selection: selection, clip: clip)
-            SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
+            switch ClipStore.shared.add(clip) {
+            case .added:
+                MarkdownExporter.shared.export(selection: selection, clip: clip)
+                SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
+            case .deduplicated(let existingID):
+                // Reuse the existing vault file — do not write another orphaned .md.
+                SaveHUD.showAlreadySaved(text: clip.preview, source: clip.contextLabel, clipID: existingID)
+            }
             self.onDoubleShift?()
         }
     }

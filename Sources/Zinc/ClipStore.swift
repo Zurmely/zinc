@@ -5,8 +5,17 @@ extension Notification.Name {
     static let clipsDidChange = Notification.Name("ZincClipsDidChange")
 }
 
+enum ClipAddResult: Equatable {
+    case added
+    case deduplicated(existingID: UUID)
+}
+
 final class ClipStore: ObservableObject {
     static let shared = ClipStore()
+
+    /// Placeholder index text used when the pasteboard has no plain text.
+    /// These collide across distinct captures, so they only dedupe against the newest clip.
+    private static let nonUniqueIndexTexts: Set<String> = ["[Image]", "[Rich content]"]
 
     @Published private(set) var clips: [Clip] = []
 
@@ -24,14 +33,35 @@ final class ClipStore: ObservableObject {
         configureSync()
     }
 
-    func add(_ clip: Clip) {
-        if let first = clips.first, first.text == clip.text {
-            return
+    /// Inserts a new clip, or bumps an existing duplicate to the top.
+    /// Callers must skip vault export when the result is `.deduplicated`.
+    @discardableResult
+    func add(_ clip: Clip) -> ClipAddResult {
+        if let existingIndex = indexOfDuplicate(for: clip.text) {
+            var existing = clips.remove(at: existingIndex)
+            existing.savedAt = clip.savedAt
+            existing.modifiedAt = clip.savedAt
+            clips.insert(existing, at: 0)
+            save()
+            pushToCloudIfNeeded(save: [existing])
+            NotificationCenter.default.post(name: .clipsDidChange, object: nil)
+            return .deduplicated(existingID: existing.id)
         }
+
         clips.insert(clip, at: 0)
         save()
         pushToCloudIfNeeded(save: [clip])
         NotificationCenter.default.post(name: .clipsDidChange, object: nil)
+        return .added
+    }
+
+    /// Content-based dedupe across stored clips (not only the newest).
+    private func indexOfDuplicate(for text: String) -> Int? {
+        if Self.nonUniqueIndexTexts.contains(text) {
+            guard let first = clips.first, first.text == text else { return nil }
+            return 0
+        }
+        return clips.firstIndex(where: { $0.text == text })
     }
 
     func remove(ids: Set<UUID>) {
