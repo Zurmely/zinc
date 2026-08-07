@@ -2,6 +2,8 @@
 
 Review date: 2026-08-07 · Commit reviewed: `6177aef` · Reviewed surface: all of `Sources/Zinc`, `Resources`, `scripts`, `README.md`
 
+**GitHub issues:** Each item is filed on GitHub as [issues #2–#50](https://github.com/Zurmely/zinc/issues) (`ZINC-NNN` → issue `#NNN+1`, e.g. ZINC-001 → [#2](https://github.com/Zurmely/zinc/issues/2)).
+
 ## How to use this file
 
 Every finding below is a self-contained work item with a stable ID (`ZINC-NNN`), so an agent can be handed one ID
