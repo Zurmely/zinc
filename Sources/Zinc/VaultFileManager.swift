@@ -23,12 +23,22 @@ enum VaultFileManager {
                 // Keep-in-place / legacy absolute paths may live outside the current vault root.
                 // Only trash tracked markdown exports (and their sibling assets folder).
                 guard markdownURL.pathExtension.lowercased() == "md" else {
-                    NSLog("Zinc: refusing to trash non-markdown path: \(path)")
+                    ErrorReporter.log(
+                        .trashFailed(
+                            path: path,
+                            message: "Refusing to trash non-markdown path"
+                        )
+                    )
                     continue
                 }
             } else {
                 guard VaultPathSafety.contains(markdownURL, vaultRoot: vaultRoot) else {
-                    NSLog("Zinc: refusing to trash path outside vault: \(path)")
+                    ErrorReporter.log(
+                        .trashFailed(
+                            path: path,
+                            message: "Refusing to trash path outside vault"
+                        )
+                    )
                     continue
                 }
             }
@@ -51,7 +61,7 @@ enum VaultFileManager {
         do {
             try fileManager.trashItem(at: url, resultingItemURL: nil)
         } catch {
-            NSLog("Zinc: failed to trash \(url.path): \(error)")
+            ErrorReporter.report(.trashFailed(path: url.path, underlying: error))
         }
     }
 
@@ -76,7 +86,9 @@ enum VaultFileManager {
             do {
                 try fileManager.trashItem(at: current, resultingItemURL: nil)
             } catch {
-                NSLog("Zinc: failed to trash empty directory \(current.path): \(error)")
+                ErrorReporter.log(
+                    .trashFailed(path: current.path, underlying: error)
+                )
                 break
             }
 

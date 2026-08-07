@@ -6,7 +6,7 @@ extension Notification.Name {
 }
 
 enum ClipAddResult: Equatable {
-    case added
+    case added(indexSaved: Bool)
     case deduplicated(existingID: UUID)
 }
 
@@ -50,10 +50,10 @@ final class ClipStore: ObservableObject {
         }
 
         clips.insert(clip, at: 0)
-        save()
+        let indexSaved = save()
         pushToCloudIfNeeded(save: [clip])
         NotificationCenter.default.post(name: .clipsDidChange, object: nil)
-        return .added
+        return .added(indexSaved: indexSaved)
     }
 
     /// Content-based dedupe across stored clips (not only the newest).
@@ -243,12 +243,13 @@ final class ClipStore: ObservableObject {
             let data = try Data(contentsOf: fileURL)
             clips = try ClipCodec.decode(data)
         } catch {
-            NSLog("Zinc: failed to load clips: \(error)")
+            ErrorReporter.report(.indexLoadFailed(error), presentHUD: false)
             clips = []
         }
     }
 
-    private func save() {
+    @discardableResult
+    private func save() -> Bool {
         do {
             let data = try ClipCodec.encode(clips)
             let tempURL = fileURL.appendingPathExtension("tmp")
@@ -257,8 +258,10 @@ final class ClipStore: ObservableObject {
                 try FileManager.default.removeItem(at: fileURL)
             }
             try FileManager.default.moveItem(at: tempURL, to: fileURL)
+            return true
         } catch {
-            NSLog("Zinc: failed to save clips: \(error)")
+            ErrorReporter.report(.indexSaveFailed(error))
+            return false
         }
     }
 }

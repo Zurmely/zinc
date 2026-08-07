@@ -75,21 +75,24 @@ if [[ -z "$IDENTITY" ]]; then
     | head -n 1 || true)"
 fi
 
+ENTITLEMENTS="$ROOT/Resources/Zinc.entitlements"
+if [[ ! -f "$ENTITLEMENTS" ]]; then
+  echo "error: missing entitlements file at $ENTITLEMENTS" >&2
+  exit 1
+fi
+
 if [[ -n "$IDENTITY" ]]; then
   echo "Signing with: $IDENTITY"
-  ENTITLEMENTS="$ROOT/Resources/Zinc.entitlements"
-  if [[ -f "$ENTITLEMENTS" ]]; then
-    codesign -s "$IDENTITY" --force --deep --options runtime --entitlements "$ENTITLEMENTS" "$APP"
-  else
-    codesign -s "$IDENTITY" --force --deep --options runtime "$APP"
-  fi
+  codesign -s "$IDENTITY" --force --deep --options runtime --entitlements "$ENTITLEMENTS" "$APP"
 else
   echo "warning: no Apple Development identity found — falling back to ad-hoc" >&2
-  ENTITLEMENTS="$ROOT/Resources/Zinc.entitlements"
-  if [[ -f "$ENTITLEMENTS" ]]; then
-    codesign -s - --force --deep --identifier "com.zurmely.zinc" --entitlements "$ENTITLEMENTS" "$APP"
-  else
-    codesign -s - --force --deep --identifier "com.zurmely.zinc" "$APP"
+  codesign -s - --force --deep --identifier "com.zurmely.zinc" --entitlements "$ENTITLEMENTS" "$APP"
+fi
+
+if [[ -x "$ROOT/scripts/verify-release.sh" ]]; then
+  "$ROOT/scripts/verify-release.sh" "$APP"
+  if [[ "${VERIFY_BROWSER_CAPTURE:-}" == "1" ]]; then
+    "$ROOT/scripts/verify-release.sh" --browser "$APP"
   fi
 fi
 

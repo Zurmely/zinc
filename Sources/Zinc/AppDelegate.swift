@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupMainMenu()
         setupStatusItem()
         setupMonitors()
+        observeVaultHealth()
+        // Verify vault writability at launch so a missing/unmounted drive is visible immediately.
+        _ = VaultSettings.ensureVaultExists(reportFailure: true)
         updateStatusTooltip()
         // Ask for Accessibility after monitors are wired (alert is async, single dialog).
         Permissions.requestAccessibilityIfNeeded()
@@ -104,6 +107,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func observeVaultHealth() {
+        NotificationCenter.default.addObserver(
+            forName: .zincVaultHealthDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateStatusTooltip()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .zincChooseVaultFolder,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.chooseVaultFolder()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .zincOpenSettings,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.showSettings()
+        }
+    }
+
     @objc private func showPanel() {
         ClipPanelController.shared.openPanel()
     }
@@ -113,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openVaultFolder() {
-        _ = VaultSettings.ensureVaultExists()
+        _ = VaultSettings.ensureVaultExists(reportFailure: true)
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: VaultSettings.vaultURL.path)
     }
 
@@ -132,6 +161,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let oldURL = VaultSettings.vaultURL.standardizedFileURL
         let newURL = url.standardizedFileURL
         guard newURL.path != oldURL.path else { return }
+
+        // Refuse an unwritable destination before prompting to migrate.
+        switch VaultSettings.verifyWritable(at: newURL) {
+        case .success:
+            break
+        case .failure(let error):
+            ErrorReporter.report(error)
+            return
+        }
 
         let alert = NSAlert()
         alert.messageText = "Move existing captures?"
@@ -176,6 +214,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusTooltip() {
+        if VaultSettings.lastHealthError != nil {
+            statusItem?.button?.toolTip = "Zinc — vault unavailable (\(VaultSettings.vaultURL.path))"
+            return
+        }
+
         let count = ClipStore.shared.clips.count
         statusItem?.button?.toolTip = count == 1 ? "Zinc — 1 clip saved" : "Zinc — \(count) clips saved"
     }

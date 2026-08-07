@@ -12,5 +12,7 @@
     </array>
     <key>com.apple.developer.ubiquity-kvstore-identifier</key>
     <string>$(TeamIdentifierPrefix)com.zurmely.zinc</string>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
 </dict>
 </plist>

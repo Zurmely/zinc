@@ -91,7 +91,12 @@ enum ContextResolver {
 
             var error: NSDictionary?
             let output = script.executeAndReturnError(&error)
-            if error != nil { return }
+            if let error {
+                let code = error[NSAppleScript.errorNumber] as? Int ?? 0
+                let message = error[NSAppleScript.errorMessage] as? String ?? "unknown"
+                NSLog("Zinc: AppleScript failed (\(code)): \(message)")
+                return
+            }
 
             guard let raw = output.stringValue, !raw.isEmpty else { return }
             let parts = raw.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
