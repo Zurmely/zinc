@@ -39,6 +39,7 @@ final class ShiftShiftMonitor {
     private var secondPressStarted = false
     private var contaminated = false
     private var isCapturing = false
+    private var shiftPressStartedAt: Date?
 
     private let doubleTapWindow: TimeInterval = 0.55
 
@@ -46,6 +47,8 @@ final class ShiftShiftMonitor {
     var onMonitoringBecameActive: (() -> Void)?
     private(set) var isMonitoring = false
     private var wasWaitingForPermission = false
+
+    private var settings: ShiftFilterSettings { .shared }
 
     func start() {
         wasWaitingForPermission = !Permissions.isAccessibilityTrusted
@@ -153,9 +156,15 @@ final class ShiftShiftMonitor {
         }
 
         if shiftDown && !previousShiftDown {
-            contaminated = otherModifiers
+            shiftPressStartedAt = Date()
+            contaminated = otherModifiers || shouldIgnoreForMouse() || settings.isFrontmostAppExcluded()
             if contaminated {
                 cancelArm()
+                if settings.isFrontmostAppExcluded() {
+                    ZincLog.write("Shift ignored — frontmost app excluded")
+                } else if shouldIgnoreForMouse() {
+                    ZincLog.write("Shift ignored — mouse button down")
+                }
             } else if let until = armedUntil, Date() <= until {
                 secondPressStarted = true
                 ZincLog.write("second Shift press")
@@ -164,14 +173,31 @@ final class ShiftShiftMonitor {
                 armedUntil = nil
             }
         } else if !shiftDown && previousShiftDown {
+            let holdDuration = shiftPressStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+            shiftPressStartedAt = nil
+
             if contaminated || otherModifiers {
                 cancelArm()
                 contaminated = false
+            } else if shouldIgnoreForMouse() {
+                ZincLog.write("Shift release ignored — mouse button down")
+                cancelArm()
+            } else if settings.isFrontmostAppExcluded() {
+                ZincLog.write("Shift release ignored — frontmost app excluded")
+                cancelArm()
             } else if secondPressStarted {
-                ZincLog.write("double-Shift recognized")
-                secondPressStarted = false
-                armedUntil = nil
-                triggerCapture()
+                if isHoldTooLong(holdDuration) {
+                    ZincLog.write("second Shift hold too long (\(Int(holdDuration * 1000))ms) — cancelled")
+                    cancelArm()
+                } else {
+                    ZincLog.write("double-Shift recognized")
+                    secondPressStarted = false
+                    armedUntil = nil
+                    triggerCapture()
+                }
+            } else if isHoldTooLong(holdDuration) {
+                ZincLog.write("first Shift hold too long (\(Int(holdDuration * 1000))ms) — not armed")
+                cancelArm()
             } else {
                 armedUntil = Date().addingTimeInterval(doubleTapWindow)
                 secondPressStarted = false
@@ -182,6 +208,14 @@ final class ShiftShiftMonitor {
         previousShiftDown = shiftDown
     }
 
+    private func shouldIgnoreForMouse() -> Bool {
+        settings.ignoreMouseDown && NSEvent.pressedMouseButtons != 0
+    }
+
+    private func isHoldTooLong(_ duration: TimeInterval) -> Bool {
+        settings.requireShortTaps && duration > settings.maxHoldDuration
+    }
+
     private func cancelArm() {
         armedUntil = nil
         secondPressStarted = false
@@ -189,6 +223,13 @@ final class ShiftShiftMonitor {
 
     private func triggerCapture() {
         guard !isCapturing else { return }
+
+        // Re-check exclusion at fire time in case focus changed while armed.
+        if settings.isFrontmostAppExcluded() {
+            ZincLog.write("capture skipped — frontmost app excluded")
+            return
+        }
+
         isCapturing = true
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
@@ -215,7 +256,7 @@ final class ShiftShiftMonitor {
 
             ClipStore.shared.add(clip)
             MarkdownExporter.shared.export(selection: selection, clip: clip)
-            SaveHUD.show(text: clip.preview, source: clip.contextLabel)
+            SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
             self.onDoubleShift?()
         }
     }

@@ -38,7 +38,7 @@ enum Permissions {
         1. Click “Open System Settings” below
         2. Find Zinc in the Accessibility list and turn it ON
         3. If Zinc isn’t listed, click + and choose Zinc.app
-        4. Return here — the menu bar icon will say “Shift monitor: active”
+        4. Return here — Zinc will show a brief “Shift monitor active” confirmation
         """
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Open System Settings")

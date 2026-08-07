@@ -44,6 +44,12 @@ struct RichSelection {
     }
 
     private static func readHTML(from pasteboard: NSPasteboard) -> String? {
+        // Prefer raw bytes decoded as UTF-8 so we don't inherit a Latin-1 misread.
+        if let data = pasteboard.data(forType: .html), !data.isEmpty,
+           let html = decodeHTMLData(data), !html.isEmpty {
+            return html
+        }
+
         if let html = pasteboard.string(forType: .html), !html.isEmpty {
             return html
         }
@@ -71,6 +77,16 @@ struct RichSelection {
         }
 
         return nil
+    }
+
+    private static func decodeHTMLData(_ data: Data) -> String? {
+        if let utf8 = String(data: data, encoding: .utf8), !utf8.isEmpty {
+            return utf8
+        }
+        if let utf16 = String(data: data, encoding: .utf16), !utf16.isEmpty {
+            return utf16
+        }
+        return String(data: data, encoding: .isoLatin1)
     }
 
     private static func readImages(from pasteboard: NSPasteboard) -> [PasteboardImage] {

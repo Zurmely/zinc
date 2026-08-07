@@ -7,12 +7,12 @@ enum HTMLToMarkdown {
     }
 
     static func convert(_ html: String) -> (markdown: String, imageReferences: [ImageReference]) {
-        guard let data = html.data(using: .utf8) else {
-            return (html, [])
-        }
-
+        // Parse from a Unicode string — never via UTF-8 Data. XMLDocument(data:) with a
+        // `<meta charset="utf-8">` (common from Chrome/Cursor) double-encodes and produces
+        // mojibake like "Â" (from NBSP) and "â€™" (from curly quotes).
+        let normalized = extractHTMLDocument(html)
         let options: XMLDocument.Options = [.documentTidyHTML]
-        guard let document = try? XMLDocument(data: data, options: options),
+        guard let document = try? XMLDocument(xmlString: normalized, options: options),
               let root = document.rootElement() else {
             return (html, [])
         }
@@ -22,6 +22,45 @@ enum HTMLToMarkdown {
         var markdown = convertChildren(of: body, imageReferences: &imageReferences)
         markdown = collapseBlankLines(markdown)
         return (markdown.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines), imageReferences)
+    }
+
+    /// Strips CF_HTML clipboard headers (`Version:0.9` / StartHTML / …) when present.
+    private static func extractHTMLDocument(_ raw: String) -> String {
+        guard raw.hasPrefix("Version:") else { return raw }
+
+        let utf8 = Array(raw.utf8)
+        var startHTML: Int?
+        var endHTML: Int?
+        var startFragment: Int?
+        var endFragment: Int?
+
+        for line in raw.split(separator: "\n", omittingEmptySubsequences: false) {
+            let text = String(line)
+            if text.hasPrefix("StartHTML:") {
+                startHTML = Int(text.dropFirst("StartHTML:".count).trimmingCharacters(in: .whitespaces))
+            } else if text.hasPrefix("EndHTML:") {
+                endHTML = Int(text.dropFirst("EndHTML:".count).trimmingCharacters(in: .whitespaces))
+            } else if text.hasPrefix("StartFragment:") {
+                startFragment = Int(text.dropFirst("StartFragment:".count).trimmingCharacters(in: .whitespaces))
+            } else if text.hasPrefix("EndFragment:") {
+                endFragment = Int(text.dropFirst("EndFragment:".count).trimmingCharacters(in: .whitespaces))
+            } else if text.hasPrefix("<") {
+                break
+            }
+        }
+
+        if let start = startFragment, let end = endFragment,
+           start >= 0, end > start, end <= utf8.count {
+            return String(decoding: utf8[start..<end], as: UTF8.self)
+        }
+        if let start = startHTML, let end = endHTML,
+           start >= 0, end > start, end <= utf8.count {
+            return String(decoding: utf8[start..<end], as: UTF8.self)
+        }
+        if let index = raw.firstIndex(of: "<") {
+            return String(raw[index...])
+        }
+        return raw
     }
 
     private static func convertChildren(of element: XMLElement, imageReferences: inout [ImageReference]) -> String {
@@ -205,7 +244,8 @@ enum HTMLToMarkdown {
     }
 
     private static func escapeText(_ text: String) -> String {
-        var result = text
+        // Normalize NBSP to a regular space so markdown stays clean.
+        var result = text.replacingOccurrences(of: "\u{00A0}", with: " ")
         let replacements: [(String, String)] = [
             ("\\", "\\\\"),
             ("*", "\\*"),

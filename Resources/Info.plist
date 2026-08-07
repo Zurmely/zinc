@@ -6,6 +6,10 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>Zinc</string>
+    <key>CFBundleIconFile</key>
+    <string>zincIcon</string>
+    <key>CFBundleIconName</key>
+    <string>zincIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.zurmely.zinc</string>
     <key>CFBundleInfoDictionaryVersion</key>

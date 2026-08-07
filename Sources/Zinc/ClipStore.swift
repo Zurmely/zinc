@@ -39,8 +39,12 @@ final class ClipStore: ObservableObject {
     }
 
     func remove(ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
         let paths = clips.filter { ids.contains($0.id) }.compactMap(\.markdownPath)
+        let removed = clips.count
         clips.removeAll { ids.contains($0.id) }
+        guard clips.count < removed else { return }
+        SystemSounds.playTrash()
         save()
         MarkdownPreviewStore.shared.invalidate(ids: ids)
         VaultFileManager.trashInBackground(markdownPaths: paths)
@@ -48,8 +52,10 @@ final class ClipStore: ObservableObject {
     }
 
     func clear() {
+        guard !clips.isEmpty else { return }
         let paths = clips.compactMap(\.markdownPath)
         clips.removeAll()
+        SystemSounds.playTrash()
         save()
         MarkdownPreviewStore.shared.clear()
         VaultFileManager.trashInBackground(markdownPaths: paths)
@@ -61,6 +67,11 @@ final class ClipStore: ObservableObject {
             guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
             clips[index].markdownPath = path
             save()
+            // Export finishes after the clip is first shown as plain-text fallback —
+            // invalidate and reload so the panel picks up the real markdown file.
+            MarkdownPreviewStore.shared.invalidate(ids: [id])
+            MarkdownPreviewStore.shared.loadIfNeeded(for: clips[index])
+            NotificationCenter.default.post(name: .clipsDidChange, object: nil)
         }
 
         if Thread.isMainThread {

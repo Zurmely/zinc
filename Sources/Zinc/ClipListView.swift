@@ -6,6 +6,7 @@ struct ClipListView: View {
     @ObservedObject private var store = ClipStore.shared
     @ObservedObject private var previewStore = MarkdownPreviewStore.shared
     @FocusState private var searchFocused: Bool
+    @AppStorage("zinc.shortcutsHelpExpanded") private var shortcutsHelpExpanded = false
 
     private var filteredClips: [Clip] {
         viewModel.filteredClips(from: store.clips)
@@ -140,26 +141,87 @@ struct ClipListView: View {
     }
 
     private var footer: some View {
-        HStack {
-            Text(footerLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            if viewModel.selectedIDs.count > 1 {
-                Text("\(viewModel.selectedIDs.count) selected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    shortcutsHelpExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Shortcuts")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(shortcutsHelpExpanded ? 90 : 0))
+
+                    if !shortcutsHelpExpanded {
+                        compactKeyPreview
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if viewModel.selectedIDs.count > 1 {
+                        Text("\(viewModel.selectedIDs.count) selected")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if shortcutsHelpExpanded {
+                HStack(spacing: 10) {
+                    ForEach(shortcutHints) { hint in
+                        HStack(spacing: 3) {
+                            ForEach(Array(hint.keys.enumerated()), id: \.offset) { _, key in
+                                KeyCap(key)
+                            }
+                            Text(hint.label)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+                .transition(.opacity)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
     }
 
-    private var footerLabel: String {
-        if viewModel.isDetailExpanded {
-            return "esc collapse  ·  ↵ copy  ·  ⌘⌫ delete"
+    private var compactKeyPreview: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(shortcutHints.prefix(4).enumerated()), id: \.offset) { _, hint in
+                ForEach(Array(hint.keys.enumerated()), id: \.offset) { _, key in
+                    KeyCap(key)
+                }
+            }
         }
-        return "↑↓  ·  ⇥ expand  ·  ↵ copy  ·  ⌘⌫ delete  ·  esc"
+        .opacity(0.7)
+    }
+
+    private var shortcutHints: [ShortcutHint] {
+        if viewModel.isDetailExpanded {
+            return [
+                ShortcutHint(keys: ["esc"], label: "collapse"),
+                ShortcutHint(keys: ["↵"], label: "copy"),
+                ShortcutHint(keys: ["⌘", "⌫"], label: "delete"),
+            ]
+        }
+        return [
+            ShortcutHint(keys: ["↑", "↓"], label: "move"),
+            ShortcutHint(keys: ["tab"], label: "expand"),
+            ShortcutHint(keys: ["↵"], label: "copy"),
+            ShortcutHint(keys: ["⌘", "⌫"], label: "delete"),
+            ShortcutHint(keys: ["esc"], label: "close"),
+        ]
     }
 
     private func handleRowTap(clip: Clip, index: Int) {
@@ -171,6 +233,42 @@ struct ClipListView: View {
         } else {
             viewModel.selectOnly(index: index, in: filteredClips)
         }
+    }
+}
+
+private struct ShortcutHint: Identifiable {
+    let id: String
+    let keys: [String]
+    let label: String
+
+    init(keys: [String], label: String) {
+        self.id = keys.joined(separator: "+") + "|" + label
+        self.keys = keys
+        self.label = label
+    }
+}
+
+private struct KeyCap: View {
+    let key: String
+
+    init(_ key: String) {
+        self.key = key
+    }
+
+    var body: some View {
+        Text(key)
+            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 18, minHeight: 18)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.primary.opacity(0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+            )
     }
 }
 
@@ -210,7 +308,7 @@ private struct ClipRowView: View {
                     Text(clip.contextLabel)
                         .lineLimit(1)
                     Text("·")
-                    Text(clip.savedAt, style: .relative)
+                    SavedAtText(date: clip.savedAt)
                 }
                 .font(.caption2)
                 .foregroundStyle(.secondary)

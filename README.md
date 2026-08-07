@@ -1,6 +1,6 @@
 # Zinc
 
-A native macOS menu bar app for saving text selections with context. Double-tap **Shift** to save, then **Cmd+Shift+V** to browse, search, and copy your saved clips.
+A native macOS menu bar app for saving text selections with context. Double-tap **Shift** to save, then **Option+Shift+V** to browse, search, and copy your saved clips.
 
 ## Features
 
@@ -8,7 +8,7 @@ A native macOS menu bar app for saving text selections with context. Double-tap 
 - **Rich content capture** — reads HTML, RTF, and images from the pasteboard and converts them to Markdown
 - **Markdown vault** — each capture is saved as a `.md` file under `~/Zinc/YYYY-MM/DD/App/timestamp.md`
 - **Context capture** — saves the source app name; for Safari, Chrome, Arc, and Edge also captures page URL and title
-- **Cmd+Shift+V** — opens a Spotlight-style floating panel to browse saved clips
+- **Option+Shift+V** — opens a Spotlight-style floating panel to browse saved clips
 - **Search** — filter clips by text, app name, or URL
 - **Multi-select** — Space to toggle selection, copy multiple clips as newline-joined plain text
 - **Persistent storage** — clips saved to `~/Library/Application Support/Zinc/clips.json`
@@ -55,7 +55,7 @@ The first time you save a selection from Safari, Chrome, Arc, or Edge, macOS wil
 | Action | Shortcut |
 |--------|----------|
 | Save selection | Double-tap Shift |
-| Open clip panel | Cmd+Shift+V |
+| Open clip panel | Option+Shift+V |
 | Navigate list | ↑ / ↓ |
 | Toggle selection | Space |
 | Copy | Return or Cmd+C |
@@ -67,11 +67,20 @@ The first time you save a selection from Safari, Chrome, Arc, or Edge, macOS wil
 Click the clipboard icon in the menu bar for:
 
 - Show Saved Clips
+- Settings…
 - Open Zinc Folder
 - Choose Zinc Folder…
 - Clear All Clips
 - Open Accessibility Settings
 - Quit Zinc
+
+### Double-Shift Settings
+
+Open **Settings…** to tune false-positive filters without disabling Zinc in design apps:
+
+- **Ignore Shift while a mouse button is held** — skips Shift+drag resize/scale
+- **Require short Shift taps** — longer holds (e.g. constrain proportions) do not arm capture
+- **Excluded Apps** — disable double-Shift per app; Option+Shift+V still works
 
 ## Markdown Vault
 

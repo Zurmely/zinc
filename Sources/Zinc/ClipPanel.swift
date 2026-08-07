@@ -61,7 +61,7 @@ final class ClipPanelController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    func openPanel() {
+    func openPanel(selecting clipID: UUID? = nil) {
         guard let panel = window else { return }
 
         previousApp = NSWorkspace.shared.frontmostApplication
@@ -78,7 +78,10 @@ final class ClipPanelController: NSWindowController, NSWindowDelegate {
 
         viewModel.prepareForDisplay()
         let clips = viewModel.filteredClips(from: ClipStore.shared.clips)
-        if !clips.isEmpty {
+        if let clipID, let index = clips.firstIndex(where: { $0.id == clipID }) {
+            viewModel.selectOnly(index: index, in: clips)
+            viewModel.isDetailExpanded = true
+        } else if !clips.isEmpty {
             viewModel.selectOnly(index: 0, in: clips)
         }
 
@@ -90,11 +93,14 @@ final class ClipPanelController: NSWindowController, NSWindowDelegate {
         installKeyMonitor()
 
         // Focus the search field after the window is key.
-        DispatchQueue.main.async {
-            self.viewModel.focusSearchToken += 1
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            self.viewModel.focusSearchToken += 1
+        // Skip when opening a specific clip — detail view is the focus.
+        if clipID == nil {
+            DispatchQueue.main.async {
+                self.viewModel.focusSearchToken += 1
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.viewModel.focusSearchToken += 1
+            }
         }
     }
 
@@ -216,6 +222,10 @@ final class ClipPanelViewModel: ObservableObject {
             return false
         case 8: // C
             if mods.contains(.command) {
+                // Let the system copy a partial text selection (detail preview / search field).
+                if hasActiveTextSelection {
+                    return false
+                }
                 copySelectedAndClose(from: store, clips: clips)
                 return true
             }
@@ -230,6 +240,15 @@ final class ClipPanelViewModel: ObservableObject {
         default:
             return false
         }
+    }
+
+    /// True when the key window’s first responder is an `NSTextView` with a non-empty selection
+    /// (SwiftUI selectable `Text` and the search field editor both use this).
+    private var hasActiveTextSelection: Bool {
+        guard let textView = NSApp.keyWindow?.firstResponder as? NSTextView else {
+            return false
+        }
+        return textView.selectedRange().length > 0
     }
 
     func filteredClips(from clips: [Clip]) -> [Clip] {

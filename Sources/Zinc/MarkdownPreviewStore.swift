@@ -7,6 +7,7 @@ final class MarkdownPreviewStore: ObservableObject {
 
     private let cache = NSCache<NSString, MarkdownDocumentBox>()
     private let queue = DispatchQueue(label: "com.zurmely.zinc.preview-load")
+    private var loadGeneration: [UUID: Int] = [:]
 
     private init() {
         cache.countLimit = 100
@@ -29,22 +30,30 @@ final class MarkdownPreviewStore: ObservableObject {
     }
 
     func loadIfNeeded(for clip: Clip) {
+        let clipID = clip.id
+        // Prefer the store's current clip so we see markdownPath after export.
+        let latest = ClipStore.shared.clips.first(where: { $0.id == clipID }) ?? clip
+        let generation = nextGeneration(for: clipID)
+
+        let markdownPath = latest.markdownPath
+        let fallbackText = latest.text
+
         queue.async { [weak self] in
             guard let self else { return }
             let document: MarkdownDocument
 
-            if let path = clip.markdownPath,
+            if let path = markdownPath,
                FileManager.default.fileExists(atPath: path),
                let contents = try? String(contentsOfFile: path, encoding: .utf8) {
                 document = MarkdownDocument.parse(fileContents: contents)
             } else {
-                document = MarkdownDocument.fallback(from: clip.text)
+                document = MarkdownDocument.fallback(from: fallbackText)
             }
 
-            self.cache.setObject(MarkdownDocumentBox(document), forKey: clip.id.uuidString as NSString)
-
             DispatchQueue.main.async {
-                self.documents[clip.id] = document
+                guard self.loadGeneration[clipID] == generation else { return }
+                self.cache.setObject(MarkdownDocumentBox(document), forKey: clipID.uuidString as NSString)
+                self.documents[clipID] = document
             }
         }
     }
@@ -53,12 +62,20 @@ final class MarkdownPreviewStore: ObservableObject {
         for id in ids {
             cache.removeObject(forKey: id.uuidString as NSString)
             documents.removeValue(forKey: id)
+            loadGeneration[id] = (loadGeneration[id] ?? 0) + 1
         }
     }
 
     func clear() {
         cache.removeAllObjects()
         documents.removeAll()
+        loadGeneration.removeAll()
+    }
+
+    private func nextGeneration(for id: UUID) -> Int {
+        let value = (loadGeneration[id] ?? 0) + 1
+        loadGeneration[id] = value
+        return value
     }
 }
 

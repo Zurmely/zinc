@@ -45,10 +45,10 @@ final class HotKeyCenter {
             &eventHandlerRef
         )
 
-        // Cmd+Shift+V
+        // Option+Shift+V
         RegisterEventHotKey(
             UInt32(kVK_ANSI_V),
-            UInt32(cmdKey | shiftKey),
+            UInt32(optionKey | shiftKey),
             hotKeyID,
             GetApplicationEventTarget(),
             0,

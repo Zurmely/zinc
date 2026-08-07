@@ -4,14 +4,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let shiftMonitor = ShiftShiftMonitor()
     private let hotKeyCenter = HotKeyCenter()
-    private var statusMenu: NSMenu?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMainMenu()
         setupStatusItem()
         setupMonitors()
         updateStatusTooltip()
-        refreshMenuStatus()
         // Ask for Accessibility after monitors are wired (alert is async, single dialog).
         Permissions.requestAccessibilityIfNeeded()
     }
@@ -26,6 +24,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(
             withTitle: "About Zinc",
             action: nil,
+            keyEquivalent: ""
+        )
+        appMenu.addItem(.separator())
+        appMenu.addItem(
+            withTitle: "Settings…",
+            action: #selector(showSettings),
             keyEquivalent: ""
         )
         appMenu.addItem(.separator())
@@ -57,24 +61,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Zinc")
+            button.image = Self.menuBarImage()
             button.image?.isTemplate = true
         }
 
         let menu = NSMenu()
         menu.addItem(withTitle: "Show Saved Clips", action: #selector(showPanel), keyEquivalent: "v")
-            .keyEquivalentModifierMask = [.command, .shift]
-        menu.addItem(withTitle: "Test Save Selection", action: #selector(testCapture), keyEquivalent: "")
+            .keyEquivalentModifierMask = [.option, .shift]
+        menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Open Zinc Folder", action: #selector(openVaultFolder), keyEquivalent: "")
         menu.addItem(withTitle: "Choose Zinc Folder…", action: #selector(chooseVaultFolder), keyEquivalent: "")
-        menu.addItem(.separator())
-
-        let status = NSMenuItem(title: "Shift monitor: …", action: nil, keyEquivalent: "")
-        status.isEnabled = false
-        status.tag = 100
-        menu.addItem(status)
-
         menu.addItem(.separator())
         menu.addItem(withTitle: "Clear All Clips", action: #selector(clearClips), keyEquivalent: "")
         menu.addItem(withTitle: "Open Accessibility Settings", action: #selector(openAccessibility), keyEquivalent: "")
@@ -82,17 +79,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Quit Zinc", action: #selector(quit), keyEquivalent: "q")
 
         statusItem?.menu = menu
-        statusMenu = menu
     }
 
     private func setupMonitors() {
         shiftMonitor.onDoubleShift = { [weak self] in
             self?.updateStatusTooltip()
-            self?.refreshMenuStatus()
         }
-        shiftMonitor.onMonitoringBecameActive = { [weak self] in
+        shiftMonitor.onMonitoringBecameActive = {
             SaveHUD.showMonitorActive()
-            self?.refreshMenuStatus()
         }
         shiftMonitor.start()
 
@@ -108,46 +102,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             self?.updateStatusTooltip()
         }
-
-        // Keep the menu status line accurate.
-        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.refreshMenuStatus()
-        }
-    }
-
-    private func refreshMenuStatus() {
-        guard let item = statusMenu?.item(withTag: 100) else { return }
-        if !Permissions.isAccessibilityTrusted {
-            item.title = "Shift monitor: needs Accessibility"
-        } else if shiftMonitor.isMonitoring {
-            item.title = "Shift monitor: active"
-        } else {
-            item.title = "Shift monitor: inactive"
-        }
     }
 
     @objc private func showPanel() {
         ClipPanelController.shared.openPanel()
     }
 
-    @objc private func testCapture() {
-        // Lets you verify selection capture independently of the Shift shortcut.
-        if let selection = SelectionCapture.captureSelection() {
-            let context = ContextResolver.resolve()
-            let clip = Clip(
-                text: selection.clipText,
-                appName: context.appName,
-                bundleID: context.bundleID,
-                pageURL: context.pageURL,
-                pageTitle: context.pageTitle
-            )
-            ClipStore.shared.add(clip)
-            MarkdownExporter.shared.export(selection: selection, clip: clip)
-            SaveHUD.show(text: clip.preview, source: clip.contextLabel)
-            updateStatusTooltip()
-        } else {
-            SaveHUD.showFailure()
-        }
+    @objc private func showSettings() {
+        SettingsWindowController.shared.showSettings()
     }
 
     @objc private func openVaultFolder() {
@@ -196,5 +158,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusTooltip() {
         let count = ClipStore.shared.clips.count
         statusItem?.button?.toolTip = count == 1 ? "Zinc — 1 clip saved" : "Zinc — \(count) clips saved"
+    }
+
+    private static func menuBarImage() -> NSImage {
+        if let url = Bundle.main.url(forResource: "MenubarIcon", withExtension: "svg"),
+           let image = NSImage(contentsOf: url) {
+            image.size = NSSize(width: 16, height: 16)
+            image.isTemplate = true
+            image.accessibilityDescription = "Zinc"
+            return image
+        }
+
+        let fallback = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Zinc") ?? NSImage()
+        fallback.isTemplate = true
+        return fallback
     }
 }

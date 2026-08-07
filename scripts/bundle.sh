@@ -6,6 +6,11 @@ cd "$ROOT"
 
 BUILD_PATH="${BUILD_PATH:-$ROOT/.build}"
 
+# Prefer full Xcode so actool can compile Icon Composer (.icon) assets.
+if [[ -d /Applications/Xcode.app/Contents/Developer ]]; then
+  export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
+fi
+
 echo "Building Zinc (release)..."
 swift build -c release --build-path "$BUILD_PATH"
 
@@ -35,6 +40,26 @@ mkdir -p "$MACOS" "$RESOURCES"
 
 cp "$BIN" "$MACOS/Zinc"
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
+cp "$ROOT/Resources/MenubarIcon.svg" "$RESOURCES/MenubarIcon.svg"
+
+ICON_SOURCE="$ROOT/Resources/zincIcon.icon"
+if [[ -d "$ICON_SOURCE" ]]; then
+  echo "Compiling app icon..."
+  ICON_OUT="$(mktemp -d)"
+  trap 'rm -rf "$ICON_OUT"' EXIT
+  xcrun actool "$ICON_SOURCE" \
+    --compile "$ICON_OUT" \
+    --platform macosx \
+    --minimum-deployment-target 14.0 \
+    --app-icon zincIcon \
+    --output-partial-info-plist "$ICON_OUT/partial.plist" \
+    --errors --warnings \
+    --output-format human-readable-text
+  cp "$ICON_OUT/Assets.car" "$RESOURCES/Assets.car"
+  cp "$ICON_OUT/zincIcon.icns" "$RESOURCES/zincIcon.icns"
+else
+  echo "warning: missing $ICON_SOURCE — app icon not bundled" >&2
+fi
 
 # Prefer a real Apple Development identity so Accessibility TCC grants stick.
 # Ad-hoc (-s -) changes CDHash every rebuild and macOS ignores the toggle.
