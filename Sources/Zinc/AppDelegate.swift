@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupMainMenu()
         setupStatusItem()
         setupMonitors()
+        observeVaultHealth()
+        // Verify vault writability at launch so a missing/unmounted drive is visible immediately.
+        _ = VaultSettings.ensureVaultExists(reportFailure: true)
         updateStatusTooltip()
         // Ask for Accessibility after monitors are wired (alert is async, single dialog).
         Permissions.requestAccessibilityIfNeeded()
@@ -104,6 +107,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func observeVaultHealth() {
+        NotificationCenter.default.addObserver(
+            forName: .zincVaultHealthDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateStatusTooltip()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .zincChooseVaultFolder,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.chooseVaultFolder()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .zincOpenSettings,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.showSettings()
+        }
+    }
+
     @objc private func showPanel() {
         ClipPanelController.shared.openPanel()
     }
@@ -113,7 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openVaultFolder() {
-        _ = VaultSettings.ensureVaultExists()
+        _ = VaultSettings.ensureVaultExists(reportFailure: true)
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: VaultSettings.vaultURL.path)
     }
 
@@ -128,7 +157,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.directoryURL = VaultSettings.vaultURL
 
         if panel.runModal() == .OK, let url = panel.url {
-            VaultSettings.setVaultURL(url)
+            // Verify writability when the vault is chosen — refuse an unwritable path.
+            guard VaultSettings.setVaultURL(url, reportFailure: true) else { return }
             openVaultFolder()
         }
     }
@@ -156,6 +186,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusTooltip() {
+        if VaultSettings.lastHealthError != nil {
+            statusItem?.button?.toolTip = "Zinc — vault unavailable (\(VaultSettings.vaultURL.path))"
+            return
+        }
+
         let count = ClipStore.shared.clips.count
         statusItem?.button?.toolTip = count == 1 ? "Zinc — 1 clip saved" : "Zinc — \(count) clips saved"
     }

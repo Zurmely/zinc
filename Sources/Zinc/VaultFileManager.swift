@@ -17,7 +17,12 @@ enum VaultFileManager {
         for path in markdownPaths {
             let markdownURL = URL(fileURLWithPath: path).standardizedFileURL
             guard markdownURL.path.hasPrefix(vaultRoot.path) else {
-                NSLog("Zinc: refusing to trash path outside vault: \(path)")
+                ErrorReporter.log(
+                    .trashFailed(
+                        path: path,
+                        message: "Refusing to trash path outside vault"
+                    )
+                )
                 continue
             }
 
@@ -36,7 +41,7 @@ enum VaultFileManager {
         do {
             try fileManager.trashItem(at: url, resultingItemURL: nil)
         } catch {
-            NSLog("Zinc: failed to trash \(url.path): \(error)")
+            ErrorReporter.report(.trashFailed(path: url.path, underlying: error))
         }
     }
 
@@ -61,7 +66,9 @@ enum VaultFileManager {
             do {
                 try fileManager.removeItem(at: current)
             } catch {
-                NSLog("Zinc: failed to remove empty directory \(current.path): \(error)")
+                ErrorReporter.log(
+                    .trashFailed(path: current.path, underlying: error)
+                )
                 break
             }
 

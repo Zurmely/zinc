@@ -255,9 +255,18 @@ final class ShiftShiftMonitor {
             )
 
             switch ClipStore.shared.add(clip) {
-            case .added:
-                MarkdownExporter.shared.export(selection: selection, clip: clip)
-                SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
+            case .added(let indexSaved):
+                // Defer success HUD until export finishes — vault/write failures must not look saved.
+                MarkdownExporter.shared.export(selection: selection, clip: clip) { result in
+                    switch result {
+                    case .success:
+                        // Index save already showed a failure HUD when it failed.
+                        guard indexSaved else { return }
+                        SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
+                    case .failure(let error):
+                        ErrorReporter.report(error)
+                    }
+                }
             case .deduplicated(let existingID):
                 // Reuse the existing vault file — do not write another orphaned .md.
                 SaveHUD.showAlreadySaved(text: clip.preview, source: clip.contextLabel, clipID: existingID)
