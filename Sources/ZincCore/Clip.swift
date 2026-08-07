@@ -3,7 +3,7 @@ import Foundation
 public struct Clip: Identifiable, Codable, Equatable, Hashable, Sendable {
     public let id: UUID
     public let text: String
-    public let savedAt: Date
+    public var savedAt: Date
     public var modifiedAt: Date
     public let appName: String
     public let bundleID: String
