@@ -127,9 +127,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.message = "Choose where Zinc saves Markdown captures."
         panel.directoryURL = VaultSettings.vaultURL
 
-        if panel.runModal() == .OK, let url = panel.url {
-            VaultSettings.setVaultURL(url)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let oldURL = VaultSettings.vaultURL.standardizedFileURL
+        let newURL = url.standardizedFileURL
+        guard newURL.path != oldURL.path else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Move existing captures?"
+        alert.informativeText = "Zinc can move your Markdown files into the new folder, or leave them where they are. Either way, existing clips stay usable."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Move Captures")
+        alert.addButton(withTitle: "Keep in Place")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            VaultMigration.changeVault(to: newURL, migrateFiles: true)
             openVaultFolder()
+        case .alertSecondButtonReturn:
+            VaultMigration.changeVault(to: newURL, migrateFiles: false)
+            openVaultFolder()
+        default:
+            break
         }
     }
 

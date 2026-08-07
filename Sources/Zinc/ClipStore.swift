@@ -21,6 +21,7 @@ final class ClipStore: ObservableObject {
         fileURL = zincDir.appendingPathComponent("clips.json")
 
         load()
+        normalizeMarkdownPathsToRelativeIfNeeded()
         configureSync()
     }
 
@@ -77,6 +78,71 @@ final class ClipStore: ObservableObject {
             apply()
         } else {
             DispatchQueue.main.async(execute: apply)
+        }
+    }
+
+    /// Rewrites stored markdown paths after the vault root changes.
+    func rewriteMarkdownPathsAfterVaultChange(oldRoot: URL, newRoot: URL, didMigrate: Bool) {
+        let apply = { [self] in
+            var changed = false
+            for index in clips.indices {
+                guard let stored = clips[index].markdownPath else { continue }
+                let resolved: URL
+                if VaultPathSafety.isAbsolutePath(stored) {
+                    resolved = URL(fileURLWithPath: stored).standardizedFileURL
+                } else {
+                    resolved = VaultPathSafety.resolveMarkdownURL(stored, vaultRoot: oldRoot)
+                }
+
+                let updated: String
+                if didMigrate {
+                    if let relative = VaultPathSafety.relativePath(of: resolved, to: oldRoot), !relative.isEmpty {
+                        updated = relative
+                    } else if let relative = VaultPathSafety.relativePath(of: resolved, to: newRoot), !relative.isEmpty {
+                        updated = relative
+                    } else {
+                        updated = resolved.path
+                    }
+                } else if VaultPathSafety.contains(resolved, vaultRoot: oldRoot) {
+                    updated = resolved.path
+                } else if let relative = VaultPathSafety.relativePath(of: resolved, to: newRoot), !relative.isEmpty {
+                    updated = relative
+                } else {
+                    updated = resolved.path
+                }
+
+                if clips[index].markdownPath != updated {
+                    clips[index].markdownPath = updated
+                    changed = true
+                }
+            }
+
+            guard changed else { return }
+            save()
+            MarkdownPreviewStore.shared.clear()
+            NotificationCenter.default.post(name: .clipsDidChange, object: nil)
+        }
+
+        if Thread.isMainThread {
+            apply()
+        } else {
+            DispatchQueue.main.async(execute: apply)
+        }
+    }
+
+    /// Converts absolute paths under the current vault into portable relative paths.
+    private func normalizeMarkdownPathsToRelativeIfNeeded() {
+        var changed = false
+        let root = VaultSettings.vaultURL
+        for index in clips.indices {
+            guard let stored = clips[index].markdownPath, VaultPathSafety.isAbsolutePath(stored) else { continue }
+            let url = URL(fileURLWithPath: stored)
+            guard let relative = VaultPathSafety.relativePath(of: url, to: root), !relative.isEmpty else { continue }
+            clips[index].markdownPath = relative
+            changed = true
+        }
+        if changed {
+            save()
         }
     }
 
