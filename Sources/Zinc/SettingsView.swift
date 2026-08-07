@@ -111,7 +111,7 @@ struct SettingsView: View {
                     Spacer()
                 }
 
-                Text("Double-Shift is disabled in these apps. Option+Shift+V still works.")
+                Text("Double-Shift is disabled in these apps. Password managers are excluded by default. Option+Shift+V still works.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

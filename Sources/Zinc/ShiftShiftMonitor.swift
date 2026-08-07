@@ -245,8 +245,16 @@ final class ShiftShiftMonitor {
                 return
             }
 
-            ZincLog.write("captured \(selection.plainText.count) chars")
             let context = ContextResolver.resolve()
+            // Enforce built-in password-manager exclusions at save time, not only at trigger.
+            if CaptureExclusions.shouldRefuseCapture(bundleID: context.bundleID)
+                || self.settings.isExcluded(bundleID: context.bundleID) {
+                ZincLog.write("capture skipped — source app excluded (\(context.bundleID))")
+                SaveHUD.showFailure()
+                return
+            }
+
+            ZincLog.write("captured \(selection.plainText.count) chars")
             let clip = Clip(
                 text: selection.clipText,
                 appName: context.appName,
