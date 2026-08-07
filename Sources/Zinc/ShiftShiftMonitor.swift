@@ -233,32 +233,41 @@ final class ShiftShiftMonitor {
 
         isCapturing = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+        Task { [weak self] in
             guard let self else { return }
 
-            let selection = SelectionCapture.captureSelection()
-            defer { self.isCapturing = false }
+            // Brief settle so the second Shift release isn't still in the event stream.
+            try? await Task.sleep(nanoseconds: 120_000_000)
 
-            guard let selection else {
-                ZincLog.write("capture returned nil")
-                SaveHUD.showFailure()
-                return
+            // Overlap pasteboard wait with browser URL/title resolution.
+            async let selectionTask = SelectionCapture.captureSelection()
+            async let contextTask = ContextResolver.resolve()
+            let selection = await selectionTask
+            let context = await contextTask
+
+            await MainActor.run {
+                defer { self.isCapturing = false }
+
+                guard let selection else {
+                    ZincLog.write("capture returned nil")
+                    SaveHUD.showFailure()
+                    return
+                }
+
+                ZincLog.write("captured \(selection.plainText.count) chars")
+                let clip = Clip(
+                    text: selection.clipText,
+                    appName: context.appName,
+                    bundleID: context.bundleID,
+                    pageURL: context.pageURL,
+                    pageTitle: context.pageTitle
+                )
+
+                ClipStore.shared.add(clip)
+                MarkdownExporter.shared.export(selection: selection, clip: clip)
+                SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
+                self.onDoubleShift?()
             }
-
-            ZincLog.write("captured \(selection.plainText.count) chars")
-            let context = ContextResolver.resolve()
-            let clip = Clip(
-                text: selection.clipText,
-                appName: context.appName,
-                bundleID: context.bundleID,
-                pageURL: context.pageURL,
-                pageTitle: context.pageTitle
-            )
-
-            ClipStore.shared.add(clip)
-            MarkdownExporter.shared.export(selection: selection, clip: clip)
-            SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
-            self.onDoubleShift?()
         }
     }
 }
