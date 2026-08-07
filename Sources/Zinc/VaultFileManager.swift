@@ -1,4 +1,5 @@
 import Foundation
+import ZincCore
 
 enum VaultFileManager {
     private static let queue = DispatchQueue(label: "com.zurmely.zinc.vault-trash")
@@ -16,7 +17,7 @@ enum VaultFileManager {
 
         for path in markdownPaths {
             let markdownURL = URL(fileURLWithPath: path).standardizedFileURL
-            guard markdownURL.path.hasPrefix(vaultRoot.path) else {
+            guard VaultPathSafety.contains(markdownURL, vaultRoot: vaultRoot) else {
                 NSLog("Zinc: refusing to trash path outside vault: \(path)")
                 continue
             }
@@ -45,10 +46,10 @@ enum VaultFileManager {
         vaultRoot: URL,
         fileManager: FileManager
     ) {
-        var current = directory.standardizedFileURL
-        let root = vaultRoot.standardizedFileURL
+        var current = directory.standardizedFileURL.resolvingSymlinksInPath()
+        let root = vaultRoot.standardizedFileURL.resolvingSymlinksInPath()
 
-        while current.path.hasPrefix(root.path), current != root {
+        while VaultPathSafety.contains(current, vaultRoot: root) {
             guard fileManager.fileExists(atPath: current.path) else {
                 current = current.deletingLastPathComponent()
                 continue
@@ -59,9 +60,9 @@ enum VaultFileManager {
             guard meaningful.isEmpty else { break }
 
             do {
-                try fileManager.removeItem(at: current)
+                try fileManager.trashItem(at: current, resultingItemURL: nil)
             } catch {
-                NSLog("Zinc: failed to remove empty directory \(current.path): \(error)")
+                NSLog("Zinc: failed to trash empty directory \(current.path): \(error)")
                 break
             }
 

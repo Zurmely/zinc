@@ -20,5 +20,10 @@ let package = Package(
             dependencies: ["ZincCore"],
             path: "Sources/Zinc"
         ),
+        .testTarget(
+            name: "ZincCoreTests",
+            dependencies: ["ZincCore"],
+            path: "Tests/ZincCoreTests"
+        ),
     ]
 )
