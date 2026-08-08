@@ -5,7 +5,7 @@ import ZincCore
 final class MarkdownExporter {
     static let shared = MarkdownExporter()
 
-    private let queue = DispatchQueue(label: "com.zurmely.zinc.export")
+    private static let remoteImageDownloadBudget: TimeInterval = 10
     private let posixLocale = Locale(identifier: "en_US_POSIX")
 
     private init() {}
@@ -15,15 +15,19 @@ final class MarkdownExporter {
         clip: Clip,
         completion: ((Result<URL, ZincError>) -> Void)? = nil
     ) {
-        queue.async { [self] in
-            let result = self.performExport(selection: selection, clip: clip)
-            DispatchQueue.main.async {
+        Task {
+            await MainActor.run {
+                MarkdownPreviewStore.shared.markExportPending(clip.id)
+            }
+            let result = await performExport(selection: selection, clip: clip)
+            await MainActor.run {
+                MarkdownPreviewStore.shared.markExportComplete(clip.id)
                 completion?(result)
             }
         }
     }
 
-    private func performExport(selection: RichSelection, clip: Clip) -> Result<URL, ZincError> {
+    private func performExport(selection: RichSelection, clip: Clip) async -> Result<URL, ZincError> {
         guard VaultSettings.ensureVaultExists(reportFailure: false) else {
             let error = VaultSettings.lastHealthError
                 ?? .vaultUnavailable(
@@ -72,7 +76,7 @@ final class MarkdownExporter {
                 return .failure(.exportDirectoryFailed(error))
             }
 
-            switch processImages(
+            switch await processImages(
                 markdown: markdownBody,
                 pasteboardImages: selection.images,
                 imageReferences: imageReferences,
@@ -108,15 +112,15 @@ final class MarkdownExporter {
         var frontMatter = [
             "---",
             "id: \(clip.id.uuidString)",
-            "app: \(yamlEscape(clip.appName))",
-            "bundle: \(yamlEscape(clip.bundleID))",
+            "app: \(YamlEscape.escape(clip.appName))",
+            "bundle: \(YamlEscape.escape(clip.bundleID))",
         ]
 
         if let pageURL = clip.pageURL, !pageURL.isEmpty {
-            frontMatter.append("url: \(yamlEscape(pageURL))")
+            frontMatter.append("url: \(YamlEscape.escape(pageURL))")
         }
         if let pageTitle = clip.pageTitle, !pageTitle.isEmpty {
-            frontMatter.append("title: \(yamlEscape(pageTitle))")
+            frontMatter.append("title: \(YamlEscape.escape(pageTitle))")
         }
 
         let isoFormatter = ISO8601DateFormatter()
@@ -128,38 +132,64 @@ final class MarkdownExporter {
         return frontMatter.joined(separator: "\n") + "\n\n" + body.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
     }
 
-    private func processImages(
+    internal func processImages(
         markdown: String,
         pasteboardImages: [PasteboardImage],
         imageReferences: [HTMLToMarkdown.ImageReference],
         assetsDirectory: URL,
         assetsFolderName: String
-    ) -> Result<String, ZincError> {
+    ) async -> Result<String, ZincError> {
         var result = markdown
         var imageIndex = 1
+        var sourceToLocalPath: [String: String] = [:]
 
-        for image in pasteboardImages {
-            let fileName = "image-\(imageIndex).\(normalizedExtension(image.fileExtension))"
+        let pasteboardToWrite: [PasteboardImage]
+        if imageReferences.isEmpty {
+            pasteboardToWrite = pasteboardImages
+        } else {
+            let duplicateCount = min(pasteboardImages.count, imageReferences.count)
+            pasteboardToWrite = Array(pasteboardImages.dropFirst(duplicateCount))
+        }
+
+        var pasteboardReferences: [String] = []
+        for image in pasteboardToWrite {
+            let fileName = "image-\(imageIndex).\(image.fileExtension)"
             let fileURL = assetsDirectory.appendingPathComponent(fileName)
             do {
-                let data = normalizedImageData(image)
-                try data.write(to: fileURL, options: .atomic)
+                try image.data.write(to: fileURL, options: .atomic)
                 let relativePath = "\(assetsFolderName)/\(fileName)"
-                if result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    result = "![image](\(relativePath))"
-                }
+                pasteboardReferences.append(relativePath)
                 imageIndex += 1
             } catch {
                 return .failure(.imageWriteFailed(error))
             }
         }
 
+        if !pasteboardReferences.isEmpty {
+            let imageMarkdown = pasteboardReferences
+                .map { "![image](\($0))" }
+                .joined(separator: "\n\n")
+            if result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                result = imageMarkdown
+            } else {
+                result += "\n\n" + imageMarkdown
+            }
+        }
+
+        var remoteReferences: [HTMLToMarkdown.ImageReference] = []
+
         for reference in imageReferences {
             let source = reference.originalSource
+            if let existingPath = sourceToLocalPath[source] {
+                result = result.replacingOccurrences(of: reference.markdownSource, with: existingPath)
+                continue
+            }
+
             if source.hasPrefix("data:") {
                 switch writeDataURI(source, index: imageIndex, assetsDirectory: assetsDirectory, assetsFolderName: assetsFolderName) {
                 case .success(let localPath):
                     if let localPath {
+                        sourceToLocalPath[source] = localPath
                         result = result.replacingOccurrences(of: reference.markdownSource, with: localPath)
                         imageIndex += 1
                     }
@@ -167,15 +197,38 @@ final class MarkdownExporter {
                     return .failure(error)
                 }
             } else if source.hasPrefix("http://") || source.hasPrefix("https://") {
-                switch fetchRemoteImage(from: source, index: imageIndex, assetsDirectory: assetsDirectory, assetsFolderName: assetsFolderName) {
-                case .success(let localPath):
-                    if let localPath {
-                        result = result.replacingOccurrences(of: reference.markdownSource, with: localPath)
-                        imageIndex += 1
-                    }
-                case .failure(let error):
-                    return .failure(error)
+                remoteReferences.append(reference)
+            }
+        }
+
+        if ExportSettings.shared.downloadRemoteImages, !remoteReferences.isEmpty {
+            var uniqueRemote: [(reference: HTMLToMarkdown.ImageReference, index: Int)] = []
+            var seenSources: Set<String> = []
+            for reference in remoteReferences {
+                let source = reference.originalSource
+                if sourceToLocalPath[source] != nil { continue }
+                if seenSources.insert(source).inserted {
+                    uniqueRemote.append((reference, imageIndex))
+                    imageIndex += 1
                 }
+            }
+
+            let downloads = await fetchRemoteImagesConcurrently(
+                references: uniqueRemote,
+                assetsDirectory: assetsDirectory,
+                assetsFolderName: assetsFolderName
+            )
+            for (markdownSource, localPath) in downloads {
+                if let reference = imageReferences.first(where: { $0.markdownSource == markdownSource }) {
+                    sourceToLocalPath[reference.originalSource] = localPath
+                }
+            }
+
+            for reference in imageReferences {
+                let source = reference.originalSource
+                guard source.hasPrefix("http://") || source.hasPrefix("https://"),
+                      let localPath = sourceToLocalPath[source] else { continue }
+                result = result.replacingOccurrences(of: reference.markdownSource, with: localPath)
             }
         }
 
@@ -224,70 +277,75 @@ final class MarkdownExporter {
         }
     }
 
+    private func fetchRemoteImagesConcurrently(
+        references: [(reference: HTMLToMarkdown.ImageReference, index: Int)],
+        assetsDirectory: URL,
+        assetsFolderName: String
+    ) async -> [(String, String)] {
+        let deadline = Date().addingTimeInterval(Self.remoteImageDownloadBudget)
+
+        return await withTaskGroup(of: (String, String?).self) { group in
+            for item in references {
+                let markdownSource = item.reference.markdownSource
+                let source = item.reference.originalSource
+                let index = item.index
+                group.addTask {
+                    if Date() >= deadline {
+                        return (markdownSource, nil)
+                    }
+                    let path = await self.fetchRemoteImage(
+                        from: source,
+                        index: index,
+                        assetsDirectory: assetsDirectory,
+                        assetsFolderName: assetsFolderName
+                    )
+                    return (markdownSource, path)
+                }
+            }
+
+            var results: [(String, String)] = []
+            for await (markdownSource, localPath) in group {
+                if let localPath {
+                    results.append((markdownSource, localPath))
+                }
+                if Date() >= deadline {
+                    group.cancelAll()
+                }
+            }
+            return results
+        }
+    }
+
     private func fetchRemoteImage(
         from urlString: String,
         index: Int,
         assetsDirectory: URL,
         assetsFolderName: String
-    ) -> Result<String?, ZincError> {
-        guard let url = URL(string: urlString) else { return .success(nil) }
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var downloadedData: Data?
-        var responseContentType: String?
-        var fetchError: Error?
+    ) async -> String? {
+        guard let url = URL(string: urlString) else { return nil }
 
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 5
         config.timeoutIntervalForResource = 5
         let session = URLSession(configuration: config)
 
-        let task = session.dataTask(with: url) { data, response, error in
-            if let error {
-                fetchError = error
-            }
-            downloadedData = data
-            if let httpResponse = response as? HTTPURLResponse {
-                responseContentType = httpResponse.value(forHTTPHeaderField: "Content-Type")
-            }
-            semaphore.signal()
-        }
-        task.resume()
-        _ = semaphore.wait(timeout: .now() + 6)
-
-        if let fetchError {
-            ErrorReporter.log(.imageWriteFailed(fetchError))
-        }
-
-        guard let downloadedData, !downloadedData.isEmpty else { return .success(nil) }
-
-        let ext = extensionForContentType(responseContentType) ?? url.pathExtension.nilIfEmpty ?? "png"
-        let fileName = "image-\(index).\(ext)"
-        let fileURL = assetsDirectory.appendingPathComponent(fileName)
-
         do {
+            let (downloadedData, response) = try await session.data(from: url)
+            guard !downloadedData.isEmpty else { return nil }
+
+            let responseContentType = (response as? HTTPURLResponse)?
+                .value(forHTTPHeaderField: "Content-Type")
+            let ext = extensionForContentType(responseContentType) ?? url.pathExtension.nilIfEmpty ?? "png"
+            let fileName = "image-\(index).\(ext)"
+            let fileURL = assetsDirectory.appendingPathComponent(fileName)
             try downloadedData.write(to: fileURL, options: .atomic)
-            return .success("\(assetsFolderName)/\(fileName)")
+            return "\(assetsFolderName)/\(fileName)"
         } catch {
-            return .failure(.imageWriteFailed(error))
+            if !Task.isCancelled {
+                ErrorReporter.log(.imageWriteFailed(error))
+            }
+            return nil
         }
-    }
-
-    private func normalizedImageData(_ image: PasteboardImage) -> Data {
-        if image.fileExtension == "png" {
-            return image.data
-        }
-        if let nsImage = NSImage(data: image.data),
-           let tiff = nsImage.tiffRepresentation,
-           let bitmap = NSBitmapImageRep(data: tiff),
-           let png = bitmap.representation(using: .png, properties: [:]) {
-            return png
-        }
-        return image.data
-    }
-
-    private func normalizedExtension(_ ext: String) -> String {
-        ext == "tiff" ? "png" : ext
     }
 
     private func extensionForContentType(_ contentType: String?) -> String? {
@@ -338,13 +396,6 @@ final class MarkdownExporter {
         formatter.timeZone = .current
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         return formatter.string(from: date)
-    }
-
-    private func yamlEscape(_ value: String) -> String {
-        if value.contains(":") || value.contains("#") || value.contains("\"") || value.contains("\n") {
-            return "\"\(value.replacingOccurrences(of: "\"", with: "\\\""))\""
-        }
-        return value
     }
 }
 
