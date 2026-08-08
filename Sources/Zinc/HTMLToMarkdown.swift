@@ -131,9 +131,10 @@ enum HTMLToMarkdown {
             if src.isEmpty {
                 return ""
             }
-            let ref = ImageReference(originalSource: src, markdownSource: src)
+            let placeholder = imagePlaceholder(index: imageReferences.count)
+            let ref = ImageReference(originalSource: src, markdownSource: placeholder)
             imageReferences.append(ref)
-            return "![\(escapeAlt(alt))](\(src))"
+            return "![\(escapeAlt(alt))](\(placeholder))"
 
         case "blockquote":
             let lines = children
@@ -263,6 +264,11 @@ enum HTMLToMarkdown {
 
     private static func escapeAlt(_ text: String) -> String {
         text.replacingOccurrences(of: "]", with: "\\]")
+    }
+
+    /// Stable token substituted by the exporter; never appears in real URLs or link targets.
+    static func imagePlaceholder(index: Int) -> String {
+        "zinc-image-placeholder-\(index)"
     }
 
     private static func collapseBlankLines(_ text: String) -> String {
