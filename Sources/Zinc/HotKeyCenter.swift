@@ -1,6 +1,21 @@
 import Carbon
 import AppKit
 
+enum HotKeyRegistrationResult: Equatable {
+    case success
+    case handlerInstallFailed(OSStatus)
+    case hotKeyRegisterFailed(OSStatus)
+
+    var failureMessage: String? {
+        switch self {
+        case .success:
+            return nil
+        case .handlerInstallFailed(let status), .hotKeyRegisterFailed(let status):
+            return "Could not register the panel shortcut (error \(status)). Another app may already be using \(ShortcutSettings.shared.panelHotKey.displayString). Change it in Zinc Settings → Shortcuts."
+        }
+    }
+}
+
 final class HotKeyCenter {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
@@ -8,7 +23,10 @@ final class HotKeyCenter {
 
     var onHotKey: (() -> Void)?
 
-    func register() {
+    @discardableResult
+    func register(keyCode: UInt32, modifiers: UInt32) -> HotKeyRegistrationResult {
+        unregister()
+
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
         let callback: EventHandlerUPP = { _, event, userData -> OSStatus in
@@ -36,7 +54,7 @@ final class HotKeyCenter {
         }
 
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(
+        let handlerStatus = InstallEventHandler(
             GetApplicationEventTarget(),
             callback,
             1,
@@ -44,16 +62,24 @@ final class HotKeyCenter {
             selfPtr,
             &eventHandlerRef
         )
+        guard handlerStatus == noErr else {
+            return .handlerInstallFailed(handlerStatus)
+        }
 
-        // Option+Shift+V
-        RegisterEventHotKey(
-            UInt32(kVK_ANSI_V),
-            UInt32(optionKey | shiftKey),
+        let registerStatus = RegisterEventHotKey(
+            keyCode,
+            modifiers,
             hotKeyID,
             GetApplicationEventTarget(),
             0,
             &hotKeyRef
         )
+        guard registerStatus == noErr else {
+            unregister()
+            return .hotKeyRegisterFailed(registerStatus)
+        }
+
+        return .success
     }
 
     func unregister() {

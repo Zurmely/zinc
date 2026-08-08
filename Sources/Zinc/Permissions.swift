@@ -10,12 +10,10 @@ enum Permissions {
     }
 
     static func requestAccessibilityIfNeeded() {
-        // Check only — do NOT pass prompt:true (that opens a second system dialog).
         let trusted = AXIsProcessTrusted()
-        log("Accessibility trusted = \(trusted ? "yes" : "no")")
+        ZincLogger.info("Accessibility trusted = \(trusted ? "yes" : "no")")
 
         if !trusted {
-            // Defer the alert so app launch / monitors can finish first.
             DispatchQueue.main.async {
                 showAccessibilityAlertIfNeeded()
             }
@@ -51,7 +49,6 @@ enum Permissions {
     }
 
     static func openAccessibilitySettings() {
-        // Sequoia+ URL first, then legacy.
         let urls = [
             "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility",
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
@@ -60,24 +57,6 @@ enum Permissions {
             if let url = URL(string: string), NSWorkspace.shared.open(url) {
                 return
             }
-        }
-    }
-
-    static func log(_ message: String) {
-        NSLog("Zinc: %@", message)
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Zinc", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let logURL = dir.appendingPathComponent("debug.log")
-        let line = "\(ISO8601DateFormatter().string(from: Date()))  \(message)\n"
-        guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: logURL.path),
-           let handle = try? FileHandle(forWritingTo: logURL) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-        } else {
-            try? data.write(to: logURL)
         }
     }
 }
