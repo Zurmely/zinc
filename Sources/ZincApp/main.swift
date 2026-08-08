@@ -1,0 +1,3 @@
+import ZincLib
+
+ZincLibMain.run()

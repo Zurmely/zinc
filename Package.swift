@@ -9,20 +9,26 @@ let package = Package(
     ],
     products: [
         .library(name: "ZincCore", targets: ["ZincCore"]),
+        .library(name: "ZincLib", targets: ["ZincLib"]),
     ],
     targets: [
         .target(
             name: "ZincCore",
             path: "Sources/ZincCore"
         ),
-        .executableTarget(
-            name: "Zinc",
+        .target(
+            name: "ZincLib",
             dependencies: ["ZincCore"],
             path: "Sources/Zinc"
         ),
+        .executableTarget(
+            name: "Zinc",
+            dependencies: ["ZincLib"],
+            path: "Sources/ZincApp"
+        ),
         .testTarget(
             name: "ZincCoreTests",
-            dependencies: ["ZincCore"],
+            dependencies: ["ZincCore", "ZincLib"],
             path: "Tests/ZincCoreTests"
         ),
     ]

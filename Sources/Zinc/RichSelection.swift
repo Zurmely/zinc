@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import UniformTypeIdentifiers
 import ZincCore
 
@@ -108,22 +109,50 @@ struct RichSelection {
         return String(data: data, encoding: .isoLatin1)
     }
 
-    private static func readImages(from pasteboard: NSPasteboard) -> [PasteboardImage] {
-        var images: [PasteboardImage] = []
-        let imageTypes: [NSPasteboard.PasteboardType] = [
-            .png,
-            .tiff,
-            NSPasteboard.PasteboardType(UTType.image.identifier),
-        ]
+    private static let imageFlavorPriority: [NSPasteboard.PasteboardType] = [
+        .png,
+        NSPasteboard.PasteboardType(UTType.jpeg.identifier),
+        NSPasteboard.PasteboardType(UTType.heic.identifier),
+        NSPasteboard.PasteboardType(UTType.gif.identifier),
+        NSPasteboard.PasteboardType(UTType.image.identifier),
+        .tiff,
+    ]
 
-        for type in imageTypes {
-            guard let data = pasteboard.data(forType: type), !data.isEmpty else { continue }
-            let ext = type == .png ? "png" : "tiff"
-            if !images.contains(where: { $0.data == data }) {
-                images.append(PasteboardImage(data: data, fileExtension: ext))
-            }
+    private static func readImages(from pasteboard: NSPasteboard) -> [PasteboardImage] {
+        if let items = pasteboard.pasteboardItems, !items.isEmpty {
+            return items.compactMap { readBestImage(from: $0) }
         }
 
-        return images
+        for type in imageFlavorPriority {
+            guard let data = pasteboard.data(forType: type), !data.isEmpty,
+                  let ext = detectedImageExtension(for: data) else { continue }
+            return [PasteboardImage(data: data, fileExtension: ext)]
+        }
+
+        return []
+    }
+
+    private static func readBestImage(from item: NSPasteboardItem) -> PasteboardImage? {
+        guard item.types.contains(where: { imageFlavorPriority.contains($0) }) else {
+            return nil
+        }
+
+        for type in imageFlavorPriority {
+            guard item.types.contains(type),
+                  let data = item.data(forType: type), !data.isEmpty,
+                  let ext = detectedImageExtension(for: data) else { continue }
+            return PasteboardImage(data: data, fileExtension: ext)
+        }
+
+        return nil
+    }
+
+    /// Detects the on-disk extension for image bytes using ImageIO/UTType.
+    static func detectedImageExtension(for data: Data) -> String? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let typeID = CGImageSourceGetType(source) else { return nil }
+        let utType = UTType(typeID as String)
+        guard let ext = utType?.preferredFilenameExtension, !ext.isEmpty else { return nil }
+        return ext == "jpeg" ? "jpg" : ext
     }
 }
