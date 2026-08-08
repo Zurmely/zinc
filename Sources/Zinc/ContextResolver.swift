@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import ZincCore
 
 struct SourceContext {
     let appName: String
@@ -11,14 +12,6 @@ struct SourceContext {
 }
 
 enum ContextResolver {
-    private static let browserBundleIDs: Set<String> = [
-        "com.apple.Safari",
-        "com.google.Chrome",
-        "com.google.Chrome.canary",
-        "company.thebrowser.Browser", // Arc
-        "com.microsoft.edgemac",
-    ]
-
     /// Persisted so a denied Automation prompt is not re-offered on every capture.
     private static let deniedDefaultsPrefix = "Zinc.automationDenied."
 
@@ -34,7 +27,7 @@ enum ContextResolver {
         let bundleID = frontApp?.bundleIdentifier ?? "unknown"
         let icon = frontApp.flatMap { workspace.icon(forFile: $0.bundleURL?.path ?? "") }
 
-        guard browserBundleIDs.contains(bundleID) else {
+        guard BrowserSupport.isSupported(bundleID: bundleID) else {
             return SourceContext(
                 appName: appName,
                 bundleID: bundleID,
@@ -67,7 +60,7 @@ enum ContextResolver {
             }
         }
 
-        guard let script = appleScript(for: bundleID) else { return nil }
+        guard let script = BrowserSupport.appleScript(for: bundleID) else { return nil }
 
         switch await automationPermission(for: bundleID) {
         case .authorized:
@@ -96,38 +89,6 @@ enum ContextResolver {
             return nil
         case .failed(let code, let message):
             log("browser context AppleScript failed for \(bundleID) (code \(code)): \(message)")
-            return nil
-        }
-    }
-
-    private static func appleScript(for bundleID: String) -> String? {
-        switch bundleID {
-        case "com.apple.Safari":
-            return """
-            tell application "Safari"
-                if (count of windows) = 0 then return ""
-                set theDoc to current tab of front window
-                return (URL of theDoc) & linefeed & (name of theDoc)
-            end tell
-            """
-        case "com.google.Chrome", "com.google.Chrome.canary",
-             "company.thebrowser.Browser", "com.microsoft.edgemac":
-            let appName: String
-            switch bundleID {
-            case "com.google.Chrome": appName = "Google Chrome"
-            case "com.google.Chrome.canary": appName = "Google Chrome Canary"
-            case "company.thebrowser.Browser": appName = "Arc"
-            case "com.microsoft.edgemac": appName = "Microsoft Edge"
-            default: appName = "Google Chrome"
-            }
-            return """
-            tell application "\(appName)"
-                if (count of windows) = 0 then return ""
-                set theTab to active tab of front window
-                return (URL of theTab) & linefeed & (title of theTab)
-            end tell
-            """
-        default:
             return nil
         }
     }
@@ -221,18 +182,11 @@ enum ContextResolver {
                     return
                 }
 
-                let parts = raw.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
-                guard let urlPart = parts.first else {
+                guard let parsed = BrowserSupport.parseAppleScriptOutput(raw) else {
                     continuation.resume(returning: .noWindows)
                     return
                 }
-                let url = String(urlPart)
-                let title = parts.count > 1 ? String(parts[1]) : ""
-                guard !url.isEmpty else {
-                    continuation.resume(returning: .noWindows)
-                    return
-                }
-                continuation.resume(returning: .success(url: url, title: title))
+                continuation.resume(returning: .success(url: parsed.url, title: parsed.title))
             }
         }
     }
