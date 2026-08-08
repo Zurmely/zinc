@@ -4,45 +4,18 @@ import Carbon.HIToolbox
 import Foundation
 import ZincCore
 
-private enum ZincLog {
-    static let url: URL = {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Zinc", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("debug.log")
-    }()
-
-    static func write(_ message: String) {
-        let line = "\(ISO8601DateFormatter().string(from: Date()))  \(message)\n"
-        NSLog("Zinc: %@", message)
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: url.path) {
-                if let handle = try? FileHandle(forWritingTo: url) {
-                    defer { try? handle.close() }
-                    try? handle.seekToEnd()
-                    try? handle.write(contentsOf: data)
-                }
-            } else {
-                try? data.write(to: url)
-            }
-        }
-    }
-}
-
-/// Detects a clean double-tap of Shift via NSEvent monitors.
+/// Detects a clean double-tap of a modifier key via NSEvent monitors.
 final class ShiftShiftMonitor {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var accessibilityPollTimer: Timer?
 
-    private var previousShiftDown = false
+    private var previousModifierDown = false
     private var armedUntil: Date?
     private var secondPressStarted = false
     private var contaminated = false
     private var isCapturing = false
-    private var shiftPressStartedAt: Date?
-
-    private let doubleTapWindow: TimeInterval = 0.55
+    private var modifierPressStartedAt: Date?
 
     var onDoubleShift: (() -> Void)?
     var onMonitoringBecameActive: (() -> Void)?
@@ -65,13 +38,17 @@ final class ShiftShiftMonitor {
 
     private func installMonitorsIfPossible() {
         guard globalMonitor == nil else { return }
+        guard settings.doubleShiftEnabled else {
+            isMonitoring = false
+            return
+        }
         guard Permissions.isAccessibilityTrusted else {
             isMonitoring = false
-            ZincLog.write("Accessibility not trusted — Shift monitor deferred")
+            ZincLogger.info("Accessibility not trusted — modifier monitor deferred")
             return
         }
 
-        previousShiftDown = NSEvent.modifierFlags.contains(.shift)
+        previousModifierDown = NSEvent.modifierFlags.contains(settings.triggerKey.modifierFlag)
 
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
             self?.handle(event)
@@ -83,7 +60,6 @@ final class ShiftShiftMonitor {
         }
 
         isMonitoring = globalMonitor != nil
-        ZincLog.write("Shift monitor installed (global=\(globalMonitor != nil))")
 
         if isMonitoring && wasWaitingForPermission {
             wasWaitingForPermission = false
@@ -110,7 +86,7 @@ final class ShiftShiftMonitor {
         accessibilityPollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
             if Permissions.isAccessibilityTrusted {
-                if self.globalMonitor == nil {
+                if self.globalMonitor == nil, self.settings.doubleShiftEnabled {
                     self.wasWaitingForPermission = true
                     self.installMonitorsIfPossible()
                 }
@@ -122,9 +98,11 @@ final class ShiftShiftMonitor {
     }
 
     private func handle(_ event: NSEvent) {
+        guard settings.doubleShiftEnabled else { return }
+
         switch event.type {
         case .keyDown:
-            if previousShiftDown || armedUntil != nil {
+            if previousModifierDown || armedUntil != nil {
                 cancelArm()
                 contaminated = true
             }
@@ -136,77 +114,64 @@ final class ShiftShiftMonitor {
     }
 
     private func handleFlagsChanged(_ event: NSEvent) {
+        let trigger = settings.triggerKey
         let keyCode = Int(event.keyCode)
-        let isShiftKey = keyCode == kVK_Shift || keyCode == kVK_RightShift
+        let isTriggerKey = trigger.virtualKeyCodes.contains(keyCode)
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let shiftDown = flags.contains(.shift)
-        let otherModifiers = flags.contains(.command)
-            || flags.contains(.control)
-            || flags.contains(.option)
+        let modifierDown = flags.contains(trigger.modifierFlag)
+        let otherModifiers = trigger.otherModifierFlags(from: flags)
 
-        let isShiftEdge = isShiftKey || (shiftDown != previousShiftDown)
+        let isModifierEdge = isTriggerKey || (modifierDown != previousModifierDown)
 
-        if !isShiftEdge {
-            if otherModifiers && (previousShiftDown || armedUntil != nil) {
+        if !isModifierEdge {
+            if otherModifiers && (previousModifierDown || armedUntil != nil) {
                 cancelArm()
                 contaminated = true
             }
-            previousShiftDown = shiftDown
+            previousModifierDown = modifierDown
             return
         }
 
-        if shiftDown && !previousShiftDown {
-            shiftPressStartedAt = Date()
-            contaminated = otherModifiers || shouldIgnoreForMouse() || settings.isFrontmostAppExcluded()
+        if modifierDown && !previousModifierDown {
+            modifierPressStartedAt = Date()
+            contaminated = otherModifiers || shouldIgnoreForMouse() || settings.shouldSuppressDoubleShiftTrigger()
             if contaminated {
                 cancelArm()
-                if settings.isFrontmostAppExcluded() {
-                    ZincLog.write("Shift ignored — frontmost app excluded")
-                } else if shouldIgnoreForMouse() {
-                    ZincLog.write("Shift ignored — mouse button down")
-                }
             } else if let until = armedUntil, Date() <= until {
                 secondPressStarted = true
-                ZincLog.write("second Shift press")
             } else {
                 secondPressStarted = false
                 armedUntil = nil
             }
-        } else if !shiftDown && previousShiftDown {
-            let holdDuration = shiftPressStartedAt.map { Date().timeIntervalSince($0) } ?? 0
-            shiftPressStartedAt = nil
+        } else if !modifierDown && previousModifierDown {
+            let holdDuration = modifierPressStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+            modifierPressStartedAt = nil
 
             if contaminated || otherModifiers {
                 cancelArm()
                 contaminated = false
             } else if shouldIgnoreForMouse() {
-                ZincLog.write("Shift release ignored — mouse button down")
                 cancelArm()
-            } else if settings.isFrontmostAppExcluded() {
-                ZincLog.write("Shift release ignored — frontmost app excluded")
+            } else if settings.shouldSuppressDoubleShiftTrigger() {
                 cancelArm()
             } else if secondPressStarted {
                 if isHoldTooLong(holdDuration) {
-                    ZincLog.write("second Shift hold too long (\(Int(holdDuration * 1000))ms) — cancelled")
                     cancelArm()
                 } else {
-                    ZincLog.write("double-Shift recognized")
                     secondPressStarted = false
                     armedUntil = nil
                     triggerCapture()
                 }
             } else if isHoldTooLong(holdDuration) {
-                ZincLog.write("first Shift hold too long (\(Int(holdDuration * 1000))ms) — not armed")
                 cancelArm()
             } else {
-                armedUntil = Date().addingTimeInterval(doubleTapWindow)
+                armedUntil = Date().addingTimeInterval(settings.doubleTapWindow)
                 secondPressStarted = false
-                ZincLog.write("first Shift tap — armed")
             }
         }
 
-        previousShiftDown = shiftDown
+        previousModifierDown = modifierDown
     }
 
     private func shouldIgnoreForMouse() -> Bool {
@@ -225,9 +190,7 @@ final class ShiftShiftMonitor {
     private func triggerCapture() {
         guard !isCapturing else { return }
 
-        // Re-check exclusion at fire time in case focus changed while armed.
-        if settings.isFrontmostAppExcluded() {
-            ZincLog.write("capture skipped — frontmost app excluded")
+        if settings.shouldSuppressDoubleShiftTrigger() {
             return
         }
 
@@ -236,10 +199,8 @@ final class ShiftShiftMonitor {
         Task { [weak self] in
             guard let self else { return }
 
-            // Brief settle so the second Shift release isn't still in the event stream.
             try? await Task.sleep(nanoseconds: 120_000_000)
 
-            // Overlap pasteboard wait with browser URL/title resolution.
             async let selectionTask = SelectionCapture.captureSelection()
             async let contextTask = ContextResolver.resolve()
             let selection = await selectionTask
@@ -249,20 +210,19 @@ final class ShiftShiftMonitor {
                 defer { self.isCapturing = false }
 
                 guard let selection else {
-                    ZincLog.write("capture returned nil")
+                    ZincLogger.info("capture returned nil")
                     SaveHUD.showFailure()
                     return
                 }
 
-                // Enforce built-in password-manager exclusions at save time, not only at trigger.
                 if CaptureExclusions.shouldRefuseCapture(bundleID: context.bundleID)
                     || self.settings.isExcluded(bundleID: context.bundleID) {
-                    ZincLog.write("capture skipped — source app excluded (\(context.bundleID))")
+                    ZincLogger.info("capture skipped — source app excluded (\(context.bundleID))")
                     SaveHUD.showFailure()
                     return
                 }
 
-                ZincLog.write("captured \(selection.plainText.count) chars")
+                ZincLogger.info("captured \(selection.plainText.count) chars")
                 let clip = Clip(
                     text: selection.clipText,
                     appName: context.appName,
@@ -273,11 +233,9 @@ final class ShiftShiftMonitor {
 
                 switch ClipStore.shared.add(clip) {
                 case .added(let indexSaved):
-                    // Defer success HUD until export finishes — vault/write failures must not look saved.
                     MarkdownExporter.shared.export(selection: selection, clip: clip) { result in
                         switch result {
                         case .success:
-                            // Index save already showed a failure HUD when it failed.
                             guard indexSaved else { return }
                             SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
                         case .failure(let error):
@@ -285,7 +243,6 @@ final class ShiftShiftMonitor {
                         }
                     }
                 case .deduplicated(let existingID):
-                    // Reuse the existing vault file — do not write another orphaned .md.
                     SaveHUD.showAlreadySaved(text: clip.preview, source: clip.contextLabel, clipID: existingID)
                 }
                 self.onDoubleShift?()

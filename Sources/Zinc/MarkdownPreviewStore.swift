@@ -5,6 +5,7 @@ final class MarkdownPreviewStore: ObservableObject {
     static let shared = MarkdownPreviewStore()
 
     @Published private(set) var documents: [UUID: MarkdownDocument] = [:]
+    @Published private(set) var pendingExportIDs: Set<UUID> = []
 
     private let cache = NSCache<NSString, MarkdownDocumentBox>()
     private let queue = DispatchQueue(label: "com.zurmely.zinc.preview-load")
@@ -61,6 +62,19 @@ final class MarkdownPreviewStore: ObservableObject {
                 self.documents[clipID] = document
             }
         }
+    }
+
+    func markExportPending(_ clipID: UUID) {
+        pendingExportIDs.insert(clipID)
+    }
+
+    func markExportComplete(_ clipID: UUID) {
+        pendingExportIDs.remove(clipID)
+        invalidate(ids: [clipID])
+    }
+
+    func isExportPending(_ clipID: UUID) -> Bool {
+        pendingExportIDs.contains(clipID)
     }
 
     func invalidate(ids: Set<UUID>) {
