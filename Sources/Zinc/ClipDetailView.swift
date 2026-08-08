@@ -59,6 +59,16 @@ struct ClipDetailView: View {
 
             Spacer()
 
+            if previewStore.isExportPending(clip.id) {
+                HStack(spacing: 4) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Exporting…")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Text(document.contentTypeLabel)
                 .font(.caption2.weight(.medium))
                 .padding(.horizontal, 8)
