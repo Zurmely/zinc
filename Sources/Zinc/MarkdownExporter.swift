@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ZincCore
 
 final class MarkdownExporter {
     static let shared = MarkdownExporter()
@@ -9,14 +10,28 @@ final class MarkdownExporter {
 
     private init() {}
 
-    func export(selection: RichSelection, clip: Clip) {
+    func export(
+        selection: RichSelection,
+        clip: Clip,
+        completion: ((Result<URL, ZincError>) -> Void)? = nil
+    ) {
         queue.async { [self] in
-            self.performExport(selection: selection, clip: clip)
+            let result = self.performExport(selection: selection, clip: clip)
+            DispatchQueue.main.async {
+                completion?(result)
+            }
         }
     }
 
-    private func performExport(selection: RichSelection, clip: Clip) {
-        guard VaultSettings.ensureVaultExists() else { return }
+    private func performExport(selection: RichSelection, clip: Clip) -> Result<URL, ZincError> {
+        guard VaultSettings.ensureVaultExists(reportFailure: false) else {
+            let error = VaultSettings.lastHealthError
+                ?? .vaultUnavailable(
+                    path: VaultSettings.vaultURL.path,
+                    message: "Vault is not writable"
+                )
+            return .failure(error)
+        }
 
         let savedAt = clip.savedAt
         let appFolder = sanitizeAppName(clip.appName)
@@ -32,8 +47,7 @@ final class MarkdownExporter {
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {
-            NSLog("Zinc: failed to create export directory: \(error)")
-            return
+            return .failure(.exportDirectoryFailed(error))
         }
 
         let fileURL = uniqueFileURL(in: directory, baseName: timestampBase, extension: "md")
@@ -54,15 +68,21 @@ final class MarkdownExporter {
         if !selection.images.isEmpty || !imageReferences.isEmpty {
             do {
                 try FileManager.default.createDirectory(at: assetsDirectory, withIntermediateDirectories: true)
-                markdownBody = processImages(
-                    markdown: markdownBody,
-                    pasteboardImages: selection.images,
-                    imageReferences: imageReferences,
-                    assetsDirectory: assetsDirectory,
-                    assetsFolderName: assetsFolderName
-                )
             } catch {
-                NSLog("Zinc: failed to create assets directory: \(error)")
+                return .failure(.exportDirectoryFailed(error))
+            }
+
+            switch processImages(
+                markdown: markdownBody,
+                pasteboardImages: selection.images,
+                imageReferences: imageReferences,
+                assetsDirectory: assetsDirectory,
+                assetsFolderName: assetsFolderName
+            ) {
+            case .success(let body):
+                markdownBody = body
+            case .failure(let error):
+                return .failure(error)
             }
         }
 
@@ -75,10 +95,12 @@ final class MarkdownExporter {
                 try FileManager.default.removeItem(at: fileURL)
             }
             try FileManager.default.moveItem(at: tempURL, to: fileURL)
-            ClipStore.shared.setMarkdownPath(fileURL.path, for: clip.id)
+            let storedPath = VaultSettings.storedMarkdownPath(for: fileURL)
+            ClipStore.shared.setMarkdownPath(storedPath, for: clip.id)
             NSLog("Zinc: exported markdown to \(fileURL.path)")
+            return .success(fileURL)
         } catch {
-            NSLog("Zinc: failed to write markdown: \(error)")
+            return .failure(.markdownWriteFailed(error))
         }
     }
 
@@ -112,7 +134,7 @@ final class MarkdownExporter {
         imageReferences: [HTMLToMarkdown.ImageReference],
         assetsDirectory: URL,
         assetsFolderName: String
-    ) -> String {
+    ) -> Result<String, ZincError> {
         var result = markdown
         var imageIndex = 1
 
@@ -128,26 +150,36 @@ final class MarkdownExporter {
                 }
                 imageIndex += 1
             } catch {
-                NSLog("Zinc: failed to write pasteboard image: \(error)")
+                return .failure(.imageWriteFailed(error))
             }
         }
 
         for reference in imageReferences {
             let source = reference.originalSource
             if source.hasPrefix("data:") {
-                if let localPath = writeDataURI(source, index: imageIndex, assetsDirectory: assetsDirectory, assetsFolderName: assetsFolderName) {
-                    result = result.replacingOccurrences(of: reference.markdownSource, with: localPath)
-                    imageIndex += 1
+                switch writeDataURI(source, index: imageIndex, assetsDirectory: assetsDirectory, assetsFolderName: assetsFolderName) {
+                case .success(let localPath):
+                    if let localPath {
+                        result = result.replacingOccurrences(of: reference.markdownSource, with: localPath)
+                        imageIndex += 1
+                    }
+                case .failure(let error):
+                    return .failure(error)
                 }
             } else if source.hasPrefix("http://") || source.hasPrefix("https://") {
-                if let localPath = fetchRemoteImage(from: source, index: imageIndex, assetsDirectory: assetsDirectory, assetsFolderName: assetsFolderName) {
-                    result = result.replacingOccurrences(of: reference.markdownSource, with: localPath)
-                    imageIndex += 1
+                switch fetchRemoteImage(from: source, index: imageIndex, assetsDirectory: assetsDirectory, assetsFolderName: assetsFolderName) {
+                case .success(let localPath):
+                    if let localPath {
+                        result = result.replacingOccurrences(of: reference.markdownSource, with: localPath)
+                        imageIndex += 1
+                    }
+                case .failure(let error):
+                    return .failure(error)
                 }
             }
         }
 
-        return result
+        return .success(result)
     }
 
     private func writeDataURI(
@@ -155,8 +187,8 @@ final class MarkdownExporter {
         index: Int,
         assetsDirectory: URL,
         assetsFolderName: String
-    ) -> String? {
-        guard let commaIndex = source.firstIndex(of: ",") else { return nil }
+    ) -> Result<String?, ZincError> {
+        guard let commaIndex = source.firstIndex(of: ",") else { return .success(nil) }
         let metadata = String(source[source.index(after: source.startIndex)..<commaIndex])
         let payload = String(source[source.index(after: commaIndex)...])
 
@@ -180,16 +212,15 @@ final class MarkdownExporter {
             data = payload.removingPercentEncoding?.data(using: .utf8)
         }
 
-        guard let data, !data.isEmpty else { return nil }
+        guard let data, !data.isEmpty else { return .success(nil) }
 
         let fileName = "image-\(index).\(ext)"
         let fileURL = assetsDirectory.appendingPathComponent(fileName)
         do {
             try data.write(to: fileURL, options: .atomic)
-            return "\(assetsFolderName)/\(fileName)"
+            return .success("\(assetsFolderName)/\(fileName)")
         } catch {
-            NSLog("Zinc: failed to write data URI image: \(error)")
-            return nil
+            return .failure(.imageWriteFailed(error))
         }
     }
 
@@ -198,12 +229,13 @@ final class MarkdownExporter {
         index: Int,
         assetsDirectory: URL,
         assetsFolderName: String
-    ) -> String? {
-        guard let url = URL(string: urlString) else { return nil }
+    ) -> Result<String?, ZincError> {
+        guard let url = URL(string: urlString) else { return .success(nil) }
 
         let semaphore = DispatchSemaphore(value: 0)
         var downloadedData: Data?
         var responseContentType: String?
+        var fetchError: Error?
 
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 5
@@ -212,7 +244,7 @@ final class MarkdownExporter {
 
         let task = session.dataTask(with: url) { data, response, error in
             if let error {
-                NSLog("Zinc: failed to fetch image \(urlString): \(error)")
+                fetchError = error
             }
             downloadedData = data
             if let httpResponse = response as? HTTPURLResponse {
@@ -223,7 +255,11 @@ final class MarkdownExporter {
         task.resume()
         _ = semaphore.wait(timeout: .now() + 6)
 
-        guard let downloadedData, !downloadedData.isEmpty else { return nil }
+        if let fetchError {
+            ErrorReporter.log(.imageWriteFailed(fetchError))
+        }
+
+        guard let downloadedData, !downloadedData.isEmpty else { return .success(nil) }
 
         let ext = extensionForContentType(responseContentType) ?? url.pathExtension.nilIfEmpty ?? "png"
         let fileName = "image-\(index).\(ext)"
@@ -231,10 +267,9 @@ final class MarkdownExporter {
 
         do {
             try downloadedData.write(to: fileURL, options: .atomic)
-            return "\(assetsFolderName)/\(fileName)"
+            return .success("\(assetsFolderName)/\(fileName)")
         } catch {
-            NSLog("Zinc: failed to write remote image: \(error)")
-            return nil
+            return .failure(.imageWriteFailed(error))
         }
     }
 

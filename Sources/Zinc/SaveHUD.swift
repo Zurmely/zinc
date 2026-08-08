@@ -11,7 +11,8 @@ enum SaveHUD {
             preview: collapsedPreview(text),
             playSound: true,
             expands: true,
-            clipID: clipID
+            clipID: clipID,
+            recoveryAction: nil
         )
     }
 
@@ -21,7 +22,8 @@ enum SaveHUD {
             preview: collapsedPreview(text),
             playSound: false,
             expands: true,
-            clipID: clipID
+            clipID: clipID,
+            recoveryAction: nil
         )
     }
 
@@ -31,7 +33,19 @@ enum SaveHUD {
             preview: nil,
             playSound: false,
             expands: false,
-            clipID: nil
+            clipID: nil,
+            recoveryAction: nil
+        )
+    }
+
+    static func showError(_ error: ZincError) {
+        present(
+            title: error.hudTitle,
+            preview: error.hudHint,
+            playSound: false,
+            expands: error.hudHint != nil,
+            clipID: nil,
+            recoveryAction: error.recoveryAction
         )
     }
 
@@ -41,7 +55,8 @@ enum SaveHUD {
             preview: nil,
             playSound: true,
             expands: false,
-            clipID: nil
+            clipID: nil,
+            recoveryAction: nil
         )
     }
 
@@ -50,7 +65,8 @@ enum SaveHUD {
         preview: String?,
         playSound: Bool,
         expands: Bool,
-        clipID: UUID?
+        clipID: UUID?,
+        recoveryAction: ZincError.RecoveryAction?
     ) {
         DispatchQueue.main.async {
             dismiss()
@@ -184,7 +200,7 @@ enum SaveHUD {
             }
 
             hudWindow = window
-            installClickMonitor(clipID: clipID)
+            installClickMonitor(clipID: clipID, recoveryAction: recoveryAction)
 
             if shouldExpand,
                let separator,
@@ -242,9 +258,9 @@ enum SaveHUD {
     }
 
     /// Pill stays click-through (`ignoresMouseEvents`); Cmd+Click is detected globally.
-    private static func installClickMonitor(clipID: UUID?) {
+    private static func installClickMonitor(clipID: UUID?, recoveryAction: ZincError.RecoveryAction?) {
         removeClickMonitor()
-        guard let clipID else { return }
+        guard clipID != nil || recoveryAction != nil else { return }
 
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { event in
             let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -254,8 +270,21 @@ enum SaveHUD {
             DispatchQueue.main.async {
                 guard hudWindow != nil else { return }
                 dismiss()
-                ClipPanelController.shared.openPanel(selecting: clipID)
+                if let clipID {
+                    ClipPanelController.shared.openPanel(selecting: clipID)
+                } else if let recoveryAction {
+                    performRecovery(recoveryAction)
+                }
             }
+        }
+    }
+
+    private static func performRecovery(_ action: ZincError.RecoveryAction) {
+        switch action {
+        case .chooseVaultFolder:
+            NotificationCenter.default.post(name: .zincChooseVaultFolder, object: nil)
+        case .openSettings:
+            NotificationCenter.default.post(name: .zincOpenSettings, object: nil)
         }
     }
 

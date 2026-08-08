@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ZincCore
 
 struct ClipListView: View {
     @ObservedObject var viewModel: ClipPanelViewModel
@@ -394,7 +395,7 @@ private struct ClipRowView: View {
     }
 
     private func loadThumbnail(relativePath: String, markdownPath: String) -> NSImage? {
-        let baseURL = URL(fileURLWithPath: markdownPath).deletingLastPathComponent()
+        let baseURL = VaultSettings.resolveMarkdownURL(markdownPath).deletingLastPathComponent()
         let imageURL = baseURL.appendingPathComponent(relativePath)
         guard let image = NSImage(contentsOf: imageURL) else { return nil }
         image.size = NSSize(width: 72, height: 72)

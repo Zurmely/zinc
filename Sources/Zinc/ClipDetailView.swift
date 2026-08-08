@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ZincCore
 
 struct ClipDetailView: View {
     let clip: Clip
@@ -11,7 +12,7 @@ struct ClipDetailView: View {
 
     private var markdownBaseURL: URL? {
         guard let path = clip.markdownPath else { return nil }
-        return URL(fileURLWithPath: path)
+        return VaultSettings.resolveMarkdownURL(path)
     }
 
     var body: some View {
@@ -72,7 +73,8 @@ struct ClipDetailView: View {
         HStack(spacing: 12) {
             if let path = clip.markdownPath {
                 Button("Reveal in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                    let fileURL = VaultSettings.resolveMarkdownURL(path)
+                    NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 }
                 .buttonStyle(.borderless)
             }

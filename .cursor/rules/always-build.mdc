@@ -1,0 +1,17 @@
+---
+description: Always build Zinc after making code changes
+alwaysApply: true
+---
+
+# Always Build After Changes
+
+After any code change requested by the user (Swift sources, Package.swift, resources, etc.):
+
+1. Build before considering the task done.
+2. Prefer: `swift build --build-path /tmp/zinc-build` (repo `.build` often hits `build.db` disk I/O errors under Documents).
+3. After code changes, also bundle the app: `BUILD_PATH=/tmp/zinc-build ./scripts/bundle.sh` so `Zinc.app` is runnable with Accessibility.
+4. Fallback: `swift build` from the repo root if `/tmp` is unavailable.
+5. If the build fails, fix the errors and rebuild until it succeeds.
+6. Report the build result briefly (success or the failing error).
+
+Do not skip the build even for small edits. Use full permissions (`all`) so SPM can write its build database. Run the app via `open Zinc.app`, not the raw binary in `.build` or `/tmp`.

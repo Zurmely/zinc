@@ -1,4 +1,5 @@
 import Foundation
+import ZincCore
 
 final class MarkdownPreviewStore: ObservableObject {
     static let shared = MarkdownPreviewStore()
@@ -42,10 +43,14 @@ final class MarkdownPreviewStore: ObservableObject {
             guard let self else { return }
             let document: MarkdownDocument
 
-            if let path = markdownPath,
-               FileManager.default.fileExists(atPath: path),
-               let contents = try? String(contentsOfFile: path, encoding: .utf8) {
-                document = MarkdownDocument.parse(fileContents: contents)
+            if let path = markdownPath {
+                let fileURL = VaultSettings.resolveMarkdownURL(path)
+                if FileManager.default.fileExists(atPath: fileURL.path),
+                   let contents = try? String(contentsOf: fileURL, encoding: .utf8) {
+                    document = MarkdownDocument.parse(fileContents: contents)
+                } else {
+                    document = MarkdownDocument.fallback(from: fallbackText)
+                }
             } else {
                 document = MarkdownDocument.fallback(from: fallbackText)
             }

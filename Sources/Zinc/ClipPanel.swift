@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import ZincCore
 
 final class ClipPanelController: NSWindowController, NSWindowDelegate {
     static let shared = ClipPanelController()

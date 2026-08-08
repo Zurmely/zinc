@@ -1,5 +1,6 @@
 import AppKit
 import UniformTypeIdentifiers
+import ZincCore
 
 struct PasteboardImage {
     let data: Data
@@ -33,6 +34,12 @@ struct RichSelection {
     }
 
     static func read(from pasteboard: NSPasteboard) -> RichSelection? {
+        let typeIdentifiers = collectTypeIdentifiers(from: pasteboard)
+        if PasteboardPrivacy.shouldRefuseCapture(typeIdentifiers: typeIdentifiers) {
+            NSLog("Zinc: refused pasteboard capture (concealed/transient/auto-generated)")
+            return nil
+        }
+
         let plainText = pasteboard.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
@@ -41,6 +48,18 @@ struct RichSelection {
 
         let selection = RichSelection(plainText: plainText, html: html, images: images)
         return selection.hasContent ? selection : nil
+    }
+
+    /// Collects type identifiers from the pasteboard and each item (markers may appear on either).
+    static func collectTypeIdentifiers(from pasteboard: NSPasteboard) -> [String] {
+        var identifiers: [String] = []
+        if let types = pasteboard.types {
+            identifiers.append(contentsOf: types.map(\.rawValue))
+        }
+        for item in pasteboard.pasteboardItems ?? [] {
+            identifiers.append(contentsOf: item.types.map(\.rawValue))
+        }
+        return identifiers
     }
 
     private static func readHTML(from pasteboard: NSPasteboard) -> String? {

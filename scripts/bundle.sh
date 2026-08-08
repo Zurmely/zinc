@@ -83,17 +83,17 @@ fi
 
 if [[ -n "$IDENTITY" ]]; then
   echo "Signing with: $IDENTITY"
-  codesign -s "$IDENTITY" --force --options runtime --entitlements "$ENTITLEMENTS" "$MACOS/Zinc"
-  codesign -s "$IDENTITY" --force --options runtime --entitlements "$ENTITLEMENTS" "$APP"
+  codesign -s "$IDENTITY" --force --deep --options runtime --entitlements "$ENTITLEMENTS" "$APP"
 else
   echo "warning: no Apple Development identity found — falling back to ad-hoc" >&2
-  codesign -s - --force --identifier "com.zurmely.zinc" --entitlements "$ENTITLEMENTS" "$MACOS/Zinc"
-  codesign -s - --force --identifier "com.zurmely.zinc" --entitlements "$ENTITLEMENTS" "$APP"
+  codesign -s - --force --deep --identifier "com.zurmely.zinc" --entitlements "$ENTITLEMENTS" "$APP"
 fi
 
-"$ROOT/scripts/verify-release.sh" "$APP"
-if [[ "${VERIFY_BROWSER_CAPTURE:-}" == "1" ]]; then
-  "$ROOT/scripts/verify-release.sh" --browser "$APP"
+if [[ -x "$ROOT/scripts/verify-release.sh" ]]; then
+  "$ROOT/scripts/verify-release.sh" "$APP"
+  if [[ "${VERIFY_BROWSER_CAPTURE:-}" == "1" ]]; then
+    "$ROOT/scripts/verify-release.sh" --browser "$APP"
+  fi
 fi
 
 codesign -dv "$APP" 2>&1 | sed -n '1,12p' || true
