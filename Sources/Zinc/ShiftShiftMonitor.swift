@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
 import Foundation
+import ZincCore
 
 private enum ZincLog {
     static let url: URL = {
@@ -232,46 +233,63 @@ final class ShiftShiftMonitor {
 
         isCapturing = true
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+        Task { [weak self] in
             guard let self else { return }
 
-            let selection = SelectionCapture.captureSelection()
-            defer { self.isCapturing = false }
+            // Brief settle so the second Shift release isn't still in the event stream.
+            try? await Task.sleep(nanoseconds: 120_000_000)
 
-            guard let selection else {
-                ZincLog.write("capture returned nil")
-                SaveHUD.showFailure()
-                return
-            }
+            // Overlap pasteboard wait with browser URL/title resolution.
+            async let selectionTask = SelectionCapture.captureSelection()
+            async let contextTask = ContextResolver.resolve()
+            let selection = await selectionTask
+            let context = await contextTask
 
-            ZincLog.write("captured \(selection.plainText.count) chars")
-            let context = ContextResolver.resolve()
-            let clip = Clip(
-                text: selection.clipText,
-                appName: context.appName,
-                bundleID: context.bundleID,
-                pageURL: context.pageURL,
-                pageTitle: context.pageTitle
-            )
+            await MainActor.run {
+                defer { self.isCapturing = false }
 
-            switch ClipStore.shared.add(clip) {
-            case .added(let indexSaved):
-                // Defer success HUD until export finishes — vault/write failures must not look saved.
-                MarkdownExporter.shared.export(selection: selection, clip: clip) { result in
-                    switch result {
-                    case .success:
-                        // Index save already showed a failure HUD when it failed.
-                        guard indexSaved else { return }
-                        SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
-                    case .failure(let error):
-                        ErrorReporter.report(error)
-                    }
+                guard let selection else {
+                    ZincLog.write("capture returned nil")
+                    SaveHUD.showFailure()
+                    return
                 }
-            case .deduplicated(let existingID):
-                // Reuse the existing vault file — do not write another orphaned .md.
-                SaveHUD.showAlreadySaved(text: clip.preview, source: clip.contextLabel, clipID: existingID)
+
+                // Enforce built-in password-manager exclusions at save time, not only at trigger.
+                if CaptureExclusions.shouldRefuseCapture(bundleID: context.bundleID)
+                    || self.settings.isExcluded(bundleID: context.bundleID) {
+                    ZincLog.write("capture skipped — source app excluded (\(context.bundleID))")
+                    SaveHUD.showFailure()
+                    return
+                }
+
+                ZincLog.write("captured \(selection.plainText.count) chars")
+                let clip = Clip(
+                    text: selection.clipText,
+                    appName: context.appName,
+                    bundleID: context.bundleID,
+                    pageURL: context.pageURL,
+                    pageTitle: context.pageTitle
+                )
+
+                switch ClipStore.shared.add(clip) {
+                case .added(let indexSaved):
+                    // Defer success HUD until export finishes — vault/write failures must not look saved.
+                    MarkdownExporter.shared.export(selection: selection, clip: clip) { result in
+                        switch result {
+                        case .success:
+                            // Index save already showed a failure HUD when it failed.
+                            guard indexSaved else { return }
+                            SaveHUD.show(text: clip.preview, source: clip.contextLabel, clipID: clip.id)
+                        case .failure(let error):
+                            ErrorReporter.report(error)
+                        }
+                    }
+                case .deduplicated(let existingID):
+                    // Reuse the existing vault file — do not write another orphaned .md.
+                    SaveHUD.showAlreadySaved(text: clip.preview, source: clip.contextLabel, clipID: existingID)
+                }
+                self.onDoubleShift?()
             }
-            self.onDoubleShift?()
         }
     }
 }

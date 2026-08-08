@@ -1,9 +1,11 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import ZincCore
 
 struct SettingsView: View {
     @ObservedObject private var settings = ShiftFilterSettings.shared
+    @ObservedObject private var syncController = ClipSyncController.shared
     @State private var selectedExcludedIDs = Set<String>()
     @State private var holdDurationText = ""
     @FocusState private var holdDurationFocused: Bool
@@ -109,17 +111,46 @@ struct SettingsView: View {
                     Spacer()
                 }
 
-                Text("Double-Shift is disabled in these apps. Option+Shift+V still works.")
+                Text("Double-Shift is disabled in these apps. Password managers are excluded by default. Option+Shift+V still works.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } header: {
                 Text("Excluded Apps")
             }
+
+            Section {
+                Toggle("Sync clips with iCloud", isOn: Binding(
+                    get: { syncController.settings.iCloudSyncEnabled },
+                    set: { syncController.setEnabled($0) }
+                ))
+                Text("Optional. Your Markdown vault stays on this Mac; only clip text and metadata sync to Zinc on iPhone and iPad.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack {
+                    Text("Status")
+                    Spacer()
+                    Text(syncController.status.label)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let lastSyncedAt = syncController.lastSyncedAt {
+                    HStack {
+                        Text("Last synced")
+                        Spacer()
+                        Text(lastSyncedAt.formatted(date: .abbreviated, time: .shortened))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } header: {
+                Text("iCloud")
+            }
         }
         .formStyle(.grouped)
         .padding(12)
-        .frame(width: 460, height: 520)
+        .frame(width: 460, height: 600)
         .onAppear {
             holdDurationText = "\(settings.maxHoldDurationMs)"
         }
@@ -166,7 +197,7 @@ final class SettingsWindowController: NSWindowController {
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 600),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false

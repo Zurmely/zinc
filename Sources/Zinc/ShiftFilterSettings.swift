@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ZincCore
 
 /// User-configurable filters for the global double-Shift capture trigger.
 final class ShiftFilterSettings: ObservableObject {
@@ -15,6 +16,9 @@ final class ShiftFilterSettings: ObservableObject {
     static let defaultMaxHoldDurationMs = 200
     static let minHoldDurationMs = 50
     static let maxHoldDurationMs = 500
+
+    /// Well-known password managers shipped as the initial exclusion list.
+    static let defaultExcludedBundleIDs = CaptureExclusions.defaultExcludedBundleIDs
 
     @Published var ignoreMouseDown: Bool {
         didSet { UserDefaults.standard.set(ignoreMouseDown, forKey: Keys.ignoreMouseDown) }
@@ -62,12 +66,17 @@ final class ShiftFilterSettings: ObservableObject {
         let storedMs = defaults.object(forKey: Keys.maxHoldDurationMs) as? Int
         maxHoldDurationMs = Self.clampHoldDuration(storedMs ?? Self.defaultMaxHoldDurationMs)
 
-        excludedBundleIDs = defaults.stringArray(forKey: Keys.excludedBundleIDs) ?? []
+        if let stored = defaults.stringArray(forKey: Keys.excludedBundleIDs) {
+            excludedBundleIDs = stored
+        } else {
+            excludedBundleIDs = Self.defaultExcludedBundleIDs
+        }
     }
 
     func isExcluded(bundleID: String?) -> Bool {
         guard let bundleID, !bundleID.isEmpty else { return false }
         return excludedBundleIDs.contains(bundleID)
+            || CaptureExclusions.shouldRefuseCapture(bundleID: bundleID)
     }
 
     func isFrontmostAppExcluded() -> Bool {

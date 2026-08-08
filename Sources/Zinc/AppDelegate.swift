@@ -156,10 +156,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.message = "Choose where Zinc saves Markdown captures."
         panel.directoryURL = VaultSettings.vaultURL
 
-        if panel.runModal() == .OK, let url = panel.url {
-            // Verify writability when the vault is chosen — refuse an unwritable path.
-            guard VaultSettings.setVaultURL(url, reportFailure: true) else { return }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let oldURL = VaultSettings.vaultURL.standardizedFileURL
+        let newURL = url.standardizedFileURL
+        guard newURL.path != oldURL.path else { return }
+
+        // Refuse an unwritable destination before prompting to migrate.
+        switch VaultSettings.verifyWritable(at: newURL) {
+        case .success:
+            break
+        case .failure(let error):
+            ErrorReporter.report(error)
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Move existing captures?"
+        alert.informativeText = "Zinc can move your Markdown files into the new folder, or leave them where they are. Either way, existing clips stay usable."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Move Captures")
+        alert.addButton(withTitle: "Keep in Place")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            VaultMigration.changeVault(to: newURL, migrateFiles: true)
             openVaultFolder()
+        case .alertSecondButtonReturn:
+            VaultMigration.changeVault(to: newURL, migrateFiles: false)
+            openVaultFolder()
+        default:
+            break
         }
     }
 

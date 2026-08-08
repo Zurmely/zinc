@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ZincCore
 
 final class MarkdownExporter {
     static let shared = MarkdownExporter()
@@ -94,7 +95,8 @@ final class MarkdownExporter {
                 try FileManager.default.removeItem(at: fileURL)
             }
             try FileManager.default.moveItem(at: tempURL, to: fileURL)
-            ClipStore.shared.setMarkdownPath(fileURL.path, for: clip.id)
+            let storedPath = VaultSettings.storedMarkdownPath(for: fileURL)
+            ClipStore.shared.setMarkdownPath(storedPath, for: clip.id)
             NSLog("Zinc: exported markdown to \(fileURL.path)")
             return .success(fileURL)
         } catch {

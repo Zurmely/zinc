@@ -1,4 +1,5 @@
 import Foundation
+import ZincCore
 
 enum VaultFileManager {
     private static let queue = DispatchQueue(label: "com.zurmely.zinc.vault-trash")
@@ -11,19 +12,35 @@ enum VaultFileManager {
     }
 
     static func trash(markdownPaths: [String]) {
-        let vaultRoot = VaultSettings.vaultURL.standardizedFileURL
+        let vaultRoot = VaultSettings.vaultURL
         let fileManager = FileManager.default
 
         for path in markdownPaths {
-            let markdownURL = URL(fileURLWithPath: path).standardizedFileURL
-            guard markdownURL.path.hasPrefix(vaultRoot.path) else {
-                ErrorReporter.log(
-                    .trashFailed(
-                        path: path,
-                        message: "Refusing to trash path outside vault"
+            let markdownURL = VaultPathSafety.resolveMarkdownURL(path, vaultRoot: vaultRoot)
+            let storedIsAbsolute = VaultPathSafety.isAbsolutePath(path)
+
+            if storedIsAbsolute {
+                // Keep-in-place / legacy absolute paths may live outside the current vault root.
+                // Only trash tracked markdown exports (and their sibling assets folder).
+                guard markdownURL.pathExtension.lowercased() == "md" else {
+                    ErrorReporter.log(
+                        .trashFailed(
+                            path: path,
+                            message: "Refusing to trash non-markdown path"
+                        )
                     )
-                )
-                continue
+                    continue
+                }
+            } else {
+                guard VaultPathSafety.contains(markdownURL, vaultRoot: vaultRoot) else {
+                    ErrorReporter.log(
+                        .trashFailed(
+                            path: path,
+                            message: "Refusing to trash path outside vault"
+                        )
+                    )
+                    continue
+                }
             }
 
             let parentDirectory = markdownURL.deletingLastPathComponent()
@@ -32,7 +49,10 @@ enum VaultFileManager {
 
             trashItem(at: assetsURL, fileManager: fileManager)
             trashItem(at: markdownURL, fileManager: fileManager)
-            pruneEmptyDirectories(startingAt: parentDirectory, vaultRoot: vaultRoot, fileManager: fileManager)
+
+            if VaultPathSafety.contains(parentDirectory, vaultRoot: vaultRoot) {
+                pruneEmptyDirectories(startingAt: parentDirectory, vaultRoot: vaultRoot, fileManager: fileManager)
+            }
         }
     }
 
@@ -51,9 +71,9 @@ enum VaultFileManager {
         fileManager: FileManager
     ) {
         var current = directory.standardizedFileURL
-        let root = vaultRoot.standardizedFileURL
 
-        while current.path.hasPrefix(root.path), current != root {
+        // `contains` rejects the vault root itself, so pruning cannot remove or escape the root.
+        while VaultPathSafety.contains(current, vaultRoot: vaultRoot) {
             guard fileManager.fileExists(atPath: current.path) else {
                 current = current.deletingLastPathComponent()
                 continue
@@ -64,7 +84,7 @@ enum VaultFileManager {
             guard meaningful.isEmpty else { break }
 
             do {
-                try fileManager.removeItem(at: current)
+                try fileManager.trashItem(at: current, resultingItemURL: nil)
             } catch {
                 ErrorReporter.log(
                     .trashFailed(path: current.path, underlying: error)

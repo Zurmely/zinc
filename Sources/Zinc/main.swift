@@ -2,10 +2,17 @@ import AppKit
 import Foundation
 
 if ProcessInfo.processInfo.environment["ZINC_VERIFY_BROWSER_CONTEXT"] == "1" {
-    let context = ContextResolver.resolve()
-    if let pageURL = context.pageURL, !pageURL.isEmpty {
+    let semaphore = DispatchSemaphore(value: 0)
+    var resolved: SourceContext?
+    Task {
+        resolved = await ContextResolver.resolve()
+        semaphore.signal()
+    }
+    _ = semaphore.wait(timeout: .now() + 30)
+
+    if let pageURL = resolved?.pageURL, !pageURL.isEmpty {
         print("url: \(pageURL)")
-        if let pageTitle = context.pageTitle, !pageTitle.isEmpty {
+        if let pageTitle = resolved?.pageTitle, !pageTitle.isEmpty {
             print("title: \(pageTitle)")
         }
         exit(0)

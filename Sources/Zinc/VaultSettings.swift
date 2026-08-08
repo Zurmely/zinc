@@ -1,4 +1,5 @@
 import Foundation
+import ZincCore
 
 enum VaultSettings {
     private static let vaultPathKey = "zinc.vaultPath"
@@ -89,5 +90,18 @@ enum VaultSettings {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .zincVaultHealthDidChange, object: error)
         }
+    }
+
+    /// Resolves a stored clip markdown path (relative preferred, absolute legacy supported).
+    static func resolveMarkdownURL(_ storedPath: String) -> URL {
+        VaultPathSafety.resolveMarkdownURL(storedPath, vaultRoot: vaultURL)
+    }
+
+    /// Stores a portable vault-relative path when the file is inside the current vault.
+    static func storedMarkdownPath(for absoluteURL: URL) -> String {
+        if let relative = VaultPathSafety.relativePath(of: absoluteURL, to: vaultURL), !relative.isEmpty {
+            return relative
+        }
+        return absoluteURL.path
     }
 }
