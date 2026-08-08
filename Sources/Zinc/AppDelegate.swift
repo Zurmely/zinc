@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
@@ -69,8 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
-        menu.addItem(withTitle: "Show Saved Clips", action: #selector(showPanel), keyEquivalent: "v")
-            .keyEquivalentModifierMask = [.option, .shift]
+        let panelItem = menu.addItem(withTitle: "Show Saved Clips", action: #selector(showPanel), keyEquivalent: "")
+        applyPanelShortcut(to: panelItem)
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Open Zinc Folder", action: #selector(openVaultFolder), keyEquivalent: "")
@@ -96,7 +97,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKeyCenter.onHotKey = {
             ClipPanelController.shared.toggle()
         }
-        hotKeyCenter.register()
+        registerPanelHotKey()
+
+        NotificationCenter.default.addObserver(
+            forName: .zincShortcutSettingsDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.registerPanelHotKey()
+            self?.updatePanelMenuShortcut()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .zincShiftFilterSettingsDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.restartShiftMonitor()
+        }
 
         NotificationCenter.default.addObserver(
             forName: .clipsDidChange,
@@ -211,6 +229,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    private func registerPanelHotKey() {
+        let hotKey = ShortcutSettings.shared.panelHotKey
+        let result = hotKeyCenter.register(keyCode: hotKey.keyCode, modifiers: hotKey.carbonModifiers)
+        if let message = result.failureMessage {
+            showHotKeyRegistrationAlert(message)
+        }
+    }
+
+    private func restartShiftMonitor() {
+        shiftMonitor.stop()
+        shiftMonitor.start()
+    }
+
+    private func showHotKeyRegistrationAlert(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Panel Shortcut Unavailable"
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "OK")
+        if alert.runModal() == .alertFirstButtonReturn {
+            showSettings()
+        }
+    }
+
+    private func updatePanelMenuShortcut() {
+        guard let menu = statusItem?.menu,
+              let item = menu.items.first(where: { $0.action == #selector(showPanel) }) else { return }
+        applyPanelShortcut(to: item)
+    }
+
+    private func applyPanelShortcut(to item: NSMenuItem) {
+        let hotKey = ShortcutSettings.shared.panelHotKey
+        item.keyEquivalent = keyEquivalentCharacter(for: hotKey.keyCode)
+        item.keyEquivalentModifierMask = hotKey.cocoaModifiers
+    }
+
+    private func keyEquivalentCharacter(for keyCode: UInt32) -> String {
+        switch Int(keyCode) {
+        case kVK_ANSI_A ... kVK_ANSI_Z:
+            let scalar = UnicodeScalar(Int(keyCode) - Int(kVK_ANSI_A) + Int(UnicodeScalar("a").value))!
+            return String(Character(scalar))
+        case kVK_ANSI_0 ... kVK_ANSI_9:
+            return String(Int(keyCode) - kVK_ANSI_0)
+        default:
+            return ""
+        }
     }
 
     private func updateStatusTooltip() {

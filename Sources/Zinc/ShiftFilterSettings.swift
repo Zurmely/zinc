@@ -1,12 +1,60 @@
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 import ZincCore
 
-/// User-configurable filters for the global double-Shift capture trigger.
+enum DoubleTapTriggerKey: String, CaseIterable, Identifiable, Codable {
+    case shift
+    case command
+    case control
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .shift: "Shift"
+        case .command: "Command"
+        case .control: "Control"
+        }
+    }
+
+    var modifierFlag: NSEvent.ModifierFlags {
+        switch self {
+        case .shift: .shift
+        case .command: .command
+        case .control: .control
+        }
+    }
+
+    var virtualKeyCodes: [Int] {
+        switch self {
+        case .shift: [kVK_Shift, kVK_RightShift]
+        case .command: [kVK_Command, kVK_RightCommand]
+        case .control: [kVK_Control, kVK_RightControl]
+        }
+    }
+
+    func otherModifierFlags(from flags: NSEvent.ModifierFlags) -> Bool {
+        let mask = flags.intersection(.deviceIndependentFlagsMask)
+        switch self {
+        case .shift:
+            return mask.contains(.command) || mask.contains(.control) || mask.contains(.option)
+        case .command:
+            return mask.contains(.shift) || mask.contains(.control) || mask.contains(.option)
+        case .control:
+            return mask.contains(.shift) || mask.contains(.command) || mask.contains(.option)
+        }
+    }
+}
+
+/// User-configurable filters for the global double-modifier capture trigger.
 final class ShiftFilterSettings: ObservableObject {
     static let shared = ShiftFilterSettings()
 
     private enum Keys {
+        static let doubleShiftEnabled = "zinc.shift.doubleShiftEnabled"
+        static let triggerKey = "zinc.shift.triggerKey"
+        static let doubleTapWindowMs = "zinc.shift.doubleTapWindowMs"
         static let ignoreMouseDown = "zinc.shift.ignoreMouseDown"
         static let requireShortTaps = "zinc.shift.requireShortTaps"
         static let maxHoldDurationMs = "zinc.shift.maxHoldDurationMs"
@@ -17,8 +65,28 @@ final class ShiftFilterSettings: ObservableObject {
     static let minHoldDurationMs = 50
     static let maxHoldDurationMs = 500
 
-    /// Well-known password managers shipped as the initial exclusion list.
-    static let defaultExcludedBundleIDs = CaptureExclusions.defaultExcludedBundleIDs
+    static let defaultDoubleTapWindowMs = 550
+    static let minDoubleTapWindowMs = 200
+    static let maxDoubleTapWindowMs = 1000
+
+    @Published var doubleShiftEnabled: Bool {
+        didSet { UserDefaults.standard.set(doubleShiftEnabled, forKey: Keys.doubleShiftEnabled) }
+    }
+
+    @Published var triggerKey: DoubleTapTriggerKey {
+        didSet { UserDefaults.standard.set(triggerKey.rawValue, forKey: Keys.triggerKey) }
+    }
+
+    @Published var doubleTapWindowMs: Int {
+        didSet {
+            let clamped = Self.clampDoubleTapWindow(doubleTapWindowMs)
+            if clamped != doubleTapWindowMs {
+                doubleTapWindowMs = clamped
+                return
+            }
+            UserDefaults.standard.set(clamped, forKey: Keys.doubleTapWindowMs)
+        }
+    }
 
     @Published var ignoreMouseDown: Bool {
         didSet { UserDefaults.standard.set(ignoreMouseDown, forKey: Keys.ignoreMouseDown) }
@@ -28,7 +96,7 @@ final class ShiftFilterSettings: ObservableObject {
         didSet { UserDefaults.standard.set(requireShortTaps, forKey: Keys.requireShortTaps) }
     }
 
-    /// Maximum Shift key hold time (ms) that still counts as a tap when `requireShortTaps` is on.
+    /// Maximum modifier key hold time (ms) that still counts as a tap when `requireShortTaps` is on.
     @Published var maxHoldDurationMs: Int {
         didSet {
             let clamped = Self.clampHoldDuration(maxHoldDurationMs)
@@ -48,8 +116,28 @@ final class ShiftFilterSettings: ObservableObject {
         TimeInterval(maxHoldDurationMs) / 1000.0
     }
 
+    var doubleTapWindow: TimeInterval {
+        TimeInterval(doubleTapWindowMs) / 1000.0
+    }
+
     private init() {
         let defaults = UserDefaults.standard
+
+        if defaults.object(forKey: Keys.doubleShiftEnabled) == nil {
+            doubleShiftEnabled = true
+        } else {
+            doubleShiftEnabled = defaults.bool(forKey: Keys.doubleShiftEnabled)
+        }
+
+        if let raw = defaults.string(forKey: Keys.triggerKey),
+           let key = DoubleTapTriggerKey(rawValue: raw) {
+            triggerKey = key
+        } else {
+            triggerKey = .shift
+        }
+
+        let storedTapMs = defaults.object(forKey: Keys.doubleTapWindowMs) as? Int
+        doubleTapWindowMs = Self.clampDoubleTapWindow(storedTapMs ?? Self.defaultDoubleTapWindowMs)
 
         if defaults.object(forKey: Keys.ignoreMouseDown) == nil {
             ignoreMouseDown = true
@@ -66,21 +154,34 @@ final class ShiftFilterSettings: ObservableObject {
         let storedMs = defaults.object(forKey: Keys.maxHoldDurationMs) as? Int
         maxHoldDurationMs = Self.clampHoldDuration(storedMs ?? Self.defaultMaxHoldDurationMs)
 
-        if let stored = defaults.stringArray(forKey: Keys.excludedBundleIDs) {
-            excludedBundleIDs = stored
-        } else {
-            excludedBundleIDs = Self.defaultExcludedBundleIDs
-        }
+        excludedBundleIDs = defaults.stringArray(forKey: Keys.excludedBundleIDs) ?? []
     }
 
     func isExcluded(bundleID: String?) -> Bool {
         guard let bundleID, !bundleID.isEmpty else { return false }
         return excludedBundleIDs.contains(bundleID)
-            || CaptureExclusions.shouldRefuseCapture(bundleID: bundleID)
     }
 
-    func isFrontmostAppExcluded() -> Bool {
-        isExcluded(bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+    func shouldSuppressDoubleShiftTrigger(
+        frontmostBundleID: String? = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    ) -> Bool {
+        Self.shouldSuppressDoubleShiftTrigger(
+            frontmostBundleID: frontmostBundleID,
+            zincBundleID: Bundle.main.bundleIdentifier,
+            excludedBundleIDs: excludedBundleIDs
+        )
+    }
+
+    static func shouldSuppressDoubleShiftTrigger(
+        frontmostBundleID: String?,
+        zincBundleID: String?,
+        excludedBundleIDs: [String]
+    ) -> Bool {
+        DoubleShiftTriggerPolicy.shouldSuppress(
+            frontmostBundleID: frontmostBundleID,
+            zincBundleID: zincBundleID,
+            excludedBundleIDs: excludedBundleIDs
+        )
     }
 
     func addExcludedBundleID(_ bundleID: String) {
@@ -115,5 +216,9 @@ final class ShiftFilterSettings: ObservableObject {
 
     static func clampHoldDuration(_ ms: Int) -> Int {
         min(max(ms, minHoldDurationMs), maxHoldDurationMs)
+    }
+
+    static func clampDoubleTapWindow(_ ms: Int) -> Int {
+        min(max(ms, minDoubleTapWindowMs), maxDoubleTapWindowMs)
     }
 }
